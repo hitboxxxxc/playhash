@@ -4,8 +4,8 @@
  * Nunca sobrescreve dados existentes (upgrades são MERGE idempotente).
  * Bloqueado em produção (NODE_ENV=production).
  *
- * Catálogo v2 (LOJA): docs em config/machines/{id} — caminho lido pelas
- * security rules na criação de purchaseIntents e pelo processador.
+ * Catálogo v2 (LOJA): docs em config/catalog/machines/{id} — caminho lido
+ * pelas security rules na criação de purchaseIntents e pelo processador.
  */
 import { initAdmin } from './admin';
 
@@ -29,7 +29,8 @@ const ECONOMY = {
 };
 
 /**
- * Catálogo v2 de MÁQUINAS (LOJA) — config/machines/{id}.
+ * Catálogo v2 de MÁQUINAS (LOJA) — config/catalog/machines/{id} (4 segmentos:
+ * caminhos de DOCUMENTO exigem nº PAR de segmentos no Firestore).
  * Preços = sinks de longo payback (doc 05 §34); powerBasePerHs = 1000;
  * coinPrecision = 1_000_000 (1 coin = 1e6 units).
  * Campos: {name, rarity, powerUnits, priceUnits, maxPerUser, enabled, version}.
@@ -236,9 +237,9 @@ async function ensureMachineSlots(
 }
 
 /**
- * Upgrade IDEMPOTENTE do catálogo de máquinas para v2 (config/machines/{id}):
- * doc ausente => cria; version < 2 => MERGE dos campos v2 (nunca remove);
- * version >= 2 => no-op. Rodar novamente = no-op.
+ * Upgrade IDEMPOTENTE do catálogo de máquinas para v2
+ * (config/catalog/machines/{id}): doc ausente => cria; version < 2 => MERGE
+ * dos campos v2 (nunca remove); version >= 2 => no-op. Rodar novamente = no-op.
  */
 async function upgradeMachinesToV2(
   db: ReturnType<typeof initAdmin>['db'],
@@ -247,7 +248,7 @@ async function upgradeMachinesToV2(
   let upgraded = 0;
   let current = 0;
   for (const [id, v2] of Object.entries(MACHINES_V2)) {
-    const ref = db.doc(`config/machines/${id}`);
+    const ref = db.doc(`config/catalog/machines/${id}`);
     const snap = await ref.get();
     if (!snap.exists) {
       await ref.set(v2);
@@ -276,7 +277,7 @@ async function main(): Promise<void> {
 
   console.log(`[seed] config/economy: ${await createIfMissing(db, 'config/economy', ECONOMY)}`);
   console.log(`[seed] config/economy.machineSlots: ${await ensureMachineSlots(db)}`);
-  console.log(`[seed] config/machines (v2): ${await upgradeMachinesToV2(db)}`);
+  console.log(`[seed] config/catalog/machines (v2): ${await upgradeMachinesToV2(db)}`);
   for (const [id, data] of Object.entries(MACHINES)) {
     console.log(`[seed] config/catalog/machines/${id}: ${await createIfMissing(db, `config/catalog/machines/${id}`, data)}`);
   }

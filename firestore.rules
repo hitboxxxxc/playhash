@@ -177,8 +177,8 @@ service cloud.firestore {
         && request.resource.data.clientRequestId.size() >= 8
         && request.resource.data.clientRequestId.size() <= 128
         && withinTolerance(request.resource.data.createdAt)
-        && exists(/databases/$(database)/documents/config/machines/$(request.resource.data.machineId))
-        && get(/databases/$(database)/documents/config/machines/$(request.resource.data.machineId)).data.enabled == true
+        && exists(/databases/$(database)/documents/config/catalog/machines/$(request.resource.data.machineId))
+        && get(/databases/$(database)/documents/config/catalog/machines/$(request.resource.data.machineId)).data.enabled == true
         && dailyQuotaOk(request.auth.uid, 'pi', 20);
 
       allow update, delete: if false;
@@ -233,7 +233,8 @@ service cloud.firestore {
     }
 
     // ---- Config interna: catálogo de máquinas legível; economia fechada --
-    match /config/machines/{machineId} {
+    // config/catalog/machines/{id}: 4 segmentos (par obrigatório p/ docs).
+    match /config/catalog/machines/{machineId} {
       allow read: if isSignedIn();
       allow write: if false;
     }

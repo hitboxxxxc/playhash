@@ -137,7 +137,8 @@ async function handleIntent(
     }
 
     // Preço/poder/limites lidos SOMENTE da config (nunca do cliente).
-    const machineSnap = await db.doc(`config/machines/${intent.machineId}`).get();
+    // Catálogo em config/catalog/machines (4 segmentos — par obrigatório).
+    const machineSnap = await db.doc(`config/catalog/machines/${intent.machineId}`).get();
     const machine = parseMachine(intent.machineId, machineSnap);
     if (!machine) {
       return await failIntent(db, intent, 'INVALID_MACHINE', ruleVersion);
