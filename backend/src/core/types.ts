@@ -146,7 +146,11 @@ export type AuditEventType =
   | 'MISSION_REWARD_GRANTED'
   | 'ACHIEVEMENT_REWARD_GRANTED'
   | 'CLAIM_REJECTED'
-  | 'DEV_TOPUP';
+  | 'DEV_TOPUP'
+  | 'LEAGUE_PROMOTED'
+  | 'LEAGUE_REWARD_GRANTED'
+  | 'SEASON_XP_GRANTED'
+  | 'SEASON_REWARD_GRANTED';
 
 export interface ProcessingSummary {
   scanned: number;

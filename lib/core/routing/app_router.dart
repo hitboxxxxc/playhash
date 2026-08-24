@@ -10,9 +10,11 @@ import '../../features/auth/register_screen.dart';
 import '../../features/common/coming_soon_screen.dart';
 import '../../features/games/games_screen.dart';
 import '../../features/home/home_screen.dart';
+import '../../features/leagues/leagues_screen.dart';
 import '../../features/missions/missions_screen.dart';
 import '../../features/mining/mining_screen.dart';
 import '../../features/profile/profile_screen.dart';
+import '../../features/season_pass/season_screen.dart';
 import '../../features/settings/settings_screen.dart';
 import '../../features/shell/main_shell.dart';
 import '../../features/splash/auth_gate.dart';
@@ -38,6 +40,8 @@ abstract final class RoutePaths {
   static const String settings = '/app/settings';
   static const String missions = '/app/missions';
   static const String achievements = '/app/achievements';
+  static const String leagues = '/leagues';
+  static const String season = '/season';
 }
 
 /// Cria o roteador do app.
@@ -98,6 +102,14 @@ GoRouter createAppRouter({AuthServiceApi? auth, String? initialLocation}) {
       GoRoute(
         path: RoutePaths.achievements,
         builder: (_, _) => const AchievementsScreen(),
+      ),
+      GoRoute(
+        path: RoutePaths.leagues,
+        builder: (_, _) => const LeaguesScreen(),
+      ),
+      GoRoute(
+        path: RoutePaths.season,
+        builder: (_, _) => const SeasonScreen(),
       ),
       StatefulShellRoute.indexedStack(
         builder: (_, _, StatefulNavigationShell navigationShell) =>

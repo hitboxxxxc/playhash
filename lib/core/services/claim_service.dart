@@ -188,6 +188,17 @@ class ClaimService {
         return 'O período desta missão terminou. Confira as missões de hoje.';
       case 'DAILY_LIMIT_REACHED':
         return 'Limite diário de resgates atingido. Tente amanhã.';
+      case 'PREMIUM_REQUIRED':
+        return 'Esta recompensa é do PASSE PREMIUM. Assinaturas chegam na '
+            'próxima atualização.';
+      case 'SEASON_NOT_ACTIVE':
+      case 'SEASON_MISMATCH':
+      case 'SEASON_NOT_FOUND':
+        return 'Esta temporada não está mais ativa.';
+      case 'SEASON_LEVEL_TOO_LOW':
+        return 'Seu nível de temporada ainda não alcançou esta recompensa.';
+      case 'SEASON_REWARD_INVALID':
+      case 'SEASON_PROGRESS_MISSING':
       case 'CLAIM_DISABLED':
       case 'CLAIM_CATALOG_MISSING':
       case 'CLAIM_REWARD_INVALID':

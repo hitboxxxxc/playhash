@@ -18,6 +18,7 @@ import 'widgets/home_header.dart';
 import 'widgets/machine_room_grid.dart';
 import 'widgets/missions_shortcut_card.dart';
 import 'widgets/power_summary_card.dart';
+import 'widgets/season_shortcut_card.dart';
 import 'widgets/quick_stats_row.dart';
 
 enum _HomeStatus { loading, ready, error }
@@ -209,6 +210,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
         ),
         const SizedBox(height: 20),
         const MissionsShortcutCard(),
+        const SizedBox(height: 20),
+        const SeasonShortcutCard(),
         const SizedBox(height: 20),
         MachineRoomGrid(
           machines: _machines,

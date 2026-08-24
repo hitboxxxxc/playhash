@@ -29,15 +29,28 @@ import { periodKeyFor, bumpAchievementProgress } from './mission_progress';
 // Validação PURA (unit-testável)
 // ---------------------------------------------------------------------------
 
-export type ClaimKind = 'mission' | 'achievement';
+export type ClaimKind = 'mission' | 'achievement' | 'seasonFree' | 'seasonPremium';
+
+/** refId de claims de temporada: `seasonId:level` (ex.: 'season-01:3'). */
+export function parseSeasonRefId(refId: string): { seasonId: string; level: number } | null {
+  const idx = refId.indexOf(':');
+  if (idx <= 0 || idx === refId.length - 1) return null;
+  const seasonId = refId.slice(0, idx);
+  const level = Number(refId.slice(idx + 1));
+  if (seasonId.length === 0 || seasonId.length > 64) return null;
+  if (!Number.isSafeInteger(level) || level < 1 || level > 1000) return null;
+  return { seasonId, level };
+}
 
 export interface ClaimCatalogItem {
   enabled: boolean;
   target: number;
   /** Recompensa em units (BigInt). */
   rewardUnits: bigint;
-  /** Para missões: 'daily' | 'weekly' (define o período válido). '' = conquista. */
+  /** Para missões: 'daily' | 'weekly' | 'season'. '' = conquista. */
   kind: string;
+  /** periodKey fixo (missões de temporada); '' para os demais. */
+  periodKey: string;
 }
 
 export interface ClaimUserItem {
@@ -88,6 +101,84 @@ export function validateClaim(input: ClaimValidationInput): ClaimValidation {
 }
 
 // ---------------------------------------------------------------------------
+// Validação de claims de TEMPORADA (PURE, unit-testável)
+// ---------------------------------------------------------------------------
+
+export interface SeasonDocInput {
+  id: string;
+  startAtMs: number;
+  endAtMs: number;
+  /** Recompensas da trilha GRATUITA por nível (units BigInt). */
+  freeRewards: Map<number, bigint>;
+  /** Recompensas da trilha PREMIUM por nível (units BigInt). */
+  premiumRewards: Map<number, bigint>;
+}
+
+export interface SeasonProgressInput {
+  /** Nível ATUAL da temporada (derivado pelo backend — seasonProgress). */
+  level: number;
+  claimedFree: Record<string, boolean>;
+  claimedPremium: Record<string, boolean>;
+  /** Passe premium ativo (virá com Play Billing — sempre false por agora). */
+  premiumActive: boolean;
+}
+
+export interface SeasonClaimValidationInput {
+  kind: 'seasonFree' | 'seasonPremium';
+  seasonId: string;
+  level: number;
+  season: SeasonDocInput | null;
+  progress: SeasonProgressInput | null;
+  nowMs: number;
+}
+
+export type SeasonClaimValidation =
+  | { ok: true; rewardUnits: bigint }
+  | { ok: false; code: string };
+
+/**
+ * Validação de recompensa de temporada (TUDO no servidor):
+ *  - temporada existe, confere com o refId e está ativa (startAt ≤ now ≤ endAt);
+ *  - nível do usuário (derivado pelo backend) ≥ nível da recompensa;
+ *  - trilha free: não resgatada; trilha premium: exige premiumActive
+ *    (sem Play Billing ⇒ PREMIUM_REQUIRED — falha SEGURA e esperada).
+ */
+export function validateSeasonClaim(
+  input: SeasonClaimValidationInput,
+): SeasonClaimValidation {
+  if (!input.season) return { ok: false, code: 'SEASON_NOT_FOUND' };
+  if (input.season.id !== input.seasonId) {
+    return { ok: false, code: 'SEASON_MISMATCH' };
+  }
+  if (
+    !Number.isFinite(input.nowMs) ||
+    input.nowMs < input.season.startAtMs ||
+    input.nowMs > input.season.endAtMs
+  ) {
+    return { ok: false, code: 'SEASON_NOT_ACTIVE' };
+  }
+  if (!input.progress) return { ok: false, code: 'SEASON_PROGRESS_MISSING' };
+  const rewards =
+    input.kind === 'seasonFree' ? input.season.freeRewards : input.season.premiumRewards;
+  const rewardUnits = rewards.get(input.level);
+  if (rewardUnits === undefined || rewardUnits <= 0n) {
+    return { ok: false, code: 'SEASON_REWARD_INVALID' };
+  }
+  if (input.progress.level < input.level) {
+    return { ok: false, code: 'SEASON_LEVEL_TOO_LOW' };
+  }
+  const claimedMap =
+    input.kind === 'seasonFree' ? input.progress.claimedFree : input.progress.claimedPremium;
+  if (claimedMap[String(input.level)] === true) {
+    return { ok: false, code: 'CLAIM_ALREADY_CLAIMED' };
+  }
+  if (input.kind === 'seasonPremium' && !input.progress.premiumActive) {
+    return { ok: false, code: 'PREMIUM_REQUIRED' };
+  }
+  return { ok: true, rewardUnits };
+}
+
+// ---------------------------------------------------------------------------
 // Processador (Firestore/admin)
 // ---------------------------------------------------------------------------
 
@@ -105,14 +196,21 @@ function parseClaim(id: string, data: FirebaseFirestore.DocumentData): PendingCl
   const refId = data.refId;
   const clientRequestId = data.clientRequestId;
   if (typeof uid !== 'string' || uid.length === 0) return null;
-  if (kindRaw !== 'mission' && kindRaw !== 'achievement') return null;
+  if (
+    kindRaw !== 'mission' &&
+    kindRaw !== 'achievement' &&
+    kindRaw !== 'seasonFree' &&
+    kindRaw !== 'seasonPremium'
+  ) {
+    return null;
+  }
   if (typeof refId !== 'string' || refId.length === 0 || refId.length > 64) return null;
   if (typeof clientRequestId !== 'string' || clientRequestId.length < 8) return null;
   return { id, uid, kind: kindRaw, refId, clientRequestId };
 }
 
 function catalogPath(kind: ClaimKind, refId: string): string {
-  return kind === 'mission' ? `missions/${refId}` : `achievements/${refId}`;
+  return kind === 'achievement' ? `achievements/${refId}` : `missions/${refId}`;
 }
 
 function userItemPath(kind: ClaimKind, uid: string, refId: string): string {
@@ -130,11 +228,14 @@ async function loadCatalogItem(
   if (!snap.exists) return null;
   const rewardCfg = snap.get('rewardConfig') as Record<string, unknown> | undefined;
   const amount = rewardCfg == null ? NaN : Number(rewardCfg.amountUnits);
+  const rawKind = kind === 'mission' ? String(snap.get('kind') ?? 'daily') : '';
   return {
     enabled: snap.get('enabled') === true,
     target: Number(snap.get('target') ?? 0),
     rewardUnits: Number.isSafeInteger(amount) && amount > 0 ? BigInt(amount) : 0n,
-    kind: kind === 'mission' ? (snap.get('kind') === 'weekly' ? 'weekly' : 'daily') : '',
+    kind: rawKind === 'weekly' ? 'weekly' : rawKind === 'season' ? 'season' : rawKind === 'daily' ? 'daily' : '',
+    // Temporada: periodKey fixo do catálogo; '' para os demais.
+    periodKey: rawKind === 'season' ? String(snap.get('periodKey') ?? '') : '',
   };
 }
 
@@ -160,6 +261,156 @@ async function failClaim(
     detail: { failureCode: code, kind: claim.kind, refId: claim.refId },
   });
   return 'rejected';
+}
+
+/**
+ * Fluxo de claims de TEMPORADA (seasonFree/seasonPremium). A recompensa vem
+ * SEMPRE da trilha do doc seasons/{id} — nunca do cliente. Idempotente:
+ * transação re-lê o mapa claimedFree/claimedPremium.
+ */
+async function handleSeasonClaim(
+  db: Firestore,
+  economy: EconomyConfig,
+  claim: PendingClaim,
+  nowMs: number,
+): Promise<'granted' | 'rejected' | 'failed'> {
+  const ruleVersion = economy.economicRuleVersion;
+  try {
+    const parsed = parseSeasonRefId(claim.refId);
+    if (!parsed) {
+      return await failClaim(db, claim, 'INVALID_CLAIM_FIELDS', ruleVersion);
+    }
+    const seasonSnap = await db.doc(`seasons/${parsed.seasonId}`).get();
+    let season: SeasonDocInput | null = null;
+    if (seasonSnap.exists) {
+      const toMs = (v: unknown): number => {
+        if (v == null) return NaN;
+        if (typeof v === 'number') return v;
+        const t = v as { toMillis?: () => number };
+        return typeof t.toMillis === 'function' ? t.toMillis() : NaN;
+      };
+      const tracks = (seasonSnap.get('tracks') ?? {}) as Record<string, unknown>;
+      const toRewardMap = (raw: unknown): Map<number, bigint> => {
+        const map = new Map<number, bigint>();
+        if (!Array.isArray(raw)) return map;
+        for (const entry of raw as Record<string, unknown>[]) {
+          const lvl = Number(entry?.level);
+          const reward = (entry?.reward ?? {}) as Record<string, unknown>;
+          const amount = Number(reward?.amountUnits);
+          if (Number.isSafeInteger(lvl) && lvl >= 1 && Number.isSafeInteger(amount) && amount > 0) {
+            map.set(lvl, BigInt(amount));
+          }
+        }
+        return map;
+      };
+      season = {
+        id: seasonSnap.id,
+        startAtMs: toMs(seasonSnap.get('startAt')),
+        endAtMs: toMs(seasonSnap.get('endAt')),
+        freeRewards: toRewardMap(tracks.free),
+        premiumRewards: toRewardMap(tracks.premium),
+      };
+    }
+
+    const progressSnap = await db.doc(`seasonProgress/${claim.uid}`).get();
+    const progress: SeasonProgressInput | null = progressSnap.exists
+      ? {
+          level: Number(progressSnap.get('level') ?? 1),
+          claimedFree:
+            (progressSnap.get('claimedFree') as Record<string, boolean> | null) ?? {},
+          claimedPremium:
+            (progressSnap.get('claimedPremium') as Record<string, boolean> | null) ?? {},
+          premiumActive: progressSnap.get('premiumActive') === true,
+        }
+      : null;
+
+    const validation = validateSeasonClaim({
+      kind: claim.kind as 'seasonFree' | 'seasonPremium',
+      seasonId: parsed.seasonId,
+      level: parsed.level,
+      season,
+      progress,
+      nowMs,
+    });
+    if (!validation.ok) {
+      return await failClaim(db, claim, validation.code, ruleVersion);
+    }
+
+    const claimedField = claim.kind === 'seasonFree' ? 'claimedFree' : 'claimedPremium';
+    const rewardKey = String(parsed.level);
+    const rewardId = `${claim.kind === 'seasonFree' ? 'SEASON_FREE' : 'SEASON_PREMIUM'}_${parsed.seasonId}_L${parsed.level}`;
+
+    type TxOutcome = { kind: 'ok' } | { kind: 'fail'; code: string } | { kind: 'skip' };
+    const outcome: TxOutcome = await db.runTransaction(async (tx): Promise<TxOutcome> => {
+      const freshClaim = await tx.get(db.doc(`claims/${claim.id}`));
+      if (!freshClaim.exists || freshClaim.get('status') !== 'pending') {
+        return { kind: 'skip' };
+      }
+      const freshProgress = await tx.get(db.doc(`seasonProgress/${claim.uid}`));
+      const claimedMap =
+        (freshProgress.get(claimedField) as Record<string, boolean> | null) ?? {};
+      if (claimedMap[rewardKey] === true) return { kind: 'fail', code: 'CLAIM_ALREADY_CLAIMED' };
+
+      const walletRef = db.doc(`wallets/${claim.uid}`);
+      const walletSnap = await tx.get(walletRef);
+      const balance = walletSnap.exists
+        ? toInt((walletSnap.get('availableBalance') ?? 0) as number | string)
+        : 0n;
+      tx.set(
+        walletRef,
+        {
+          uid: claim.uid,
+          availableBalance: (balance + validation.rewardUnits).toString(),
+          updatedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
+      tx.set(
+        db.doc(`seasonProgress/${claim.uid}`),
+        { [claimedField]: { ...claimedMap, [rewardKey]: true } },
+        { merge: true },
+      );
+      tx.update(db.doc(`claims/${claim.id}`), {
+        status: 'claimed',
+        rewardUnits: validation.rewardUnits.toString(),
+        processedAt: FieldValue.serverTimestamp(),
+      });
+      return { kind: 'ok' };
+    });
+
+    if (outcome.kind === 'skip') return 'rejected';
+    if (outcome.kind === 'fail') {
+      return await failClaim(db, claim, outcome.code, ruleVersion);
+    }
+
+    await writeAudit(db, {
+      eventId: auditEventId('SEASON_REWARD_GRANTED', claim.id),
+      userId: claim.uid,
+      type: 'SEASON_REWARD_GRANTED',
+      valueUnits: validation.rewardUnits,
+      currencyId: 'coins',
+      referenceId: claim.id,
+      origin: 'runner.processClaims',
+      ruleVersion,
+      status: 'SUCCESS',
+      detail: { seasonId: parsed.seasonId, level: parsed.level, track: claim.kind },
+    });
+
+    // Espelho de histórico (id determinístico ⇒ idempotente).
+    await db
+      .doc(`rewards/${claim.uid}/items/${rewardId}`)
+      .create({
+        type: claim.kind === 'seasonFree' ? 'SEASON_FREE_REWARD' : 'SEASON_PREMIUM_REWARD',
+        amount: validation.rewardUnits.toString(),
+        currencyId: 'coins',
+        createdAt: FieldValue.serverTimestamp(),
+        referenceId: claim.id,
+      });
+    return 'granted';
+  } catch (err) {
+    console.error(`[processClaims] seasonClaim=${claim.id} failed: ${sanitize(err)}`);
+    return 'failed';
+  }
 }
 
 async function handleClaim(
@@ -193,8 +444,15 @@ async function handleClaim(
       : null;
     const currentPeriodKey =
       claim.kind === 'mission'
-        ? periodKeyFor(catalog?.kind === 'weekly' ? 'weekly' : 'daily', nowMs)
+        ? catalog?.kind === 'season'
+          ? catalog.periodKey // temporada: periodKey FIXO do catálogo
+          : periodKeyFor(catalog?.kind === 'weekly' ? 'weekly' : 'daily', nowMs)
         : '';
+
+    // Claims de TEMPORADA seguem fluxo próprio (trilhas free/premium).
+    if (claim.kind === 'seasonFree' || claim.kind === 'seasonPremium') {
+      return await handleSeasonClaim(db, economy, claim, nowMs);
+    }
 
     const validation = validateClaim({
       uid: claim.uid,
@@ -263,6 +521,8 @@ async function handleClaim(
 
       tx.update(claimSnap.ref, {
         status: 'claimed',
+        // Consumido pelo processador de temporada (XP de claim).
+        seasonXpApplied: false,
         rewardUnits: recheck.rewardUnits.toString(),
         processedAt: FieldValue.serverTimestamp(),
       });

@@ -205,6 +205,130 @@ const MISSIONS: Record<string, Record<string, unknown>> = {
 };
 
 /**
+ * Catálogo de LIGAS v1 — leagues/{id} (create-if-absent / merge por versão).
+ * Atribuição 100% no backend (league_sweep): liga = maior tier com
+ * minPowerUnits ≤ totalPower. Unidades BASE (powerBasePerHs = 1.000):
+ * minPowerUnits = limiar H/s × 1.000. dailyRewardUnits em units de coin
+ * (1 coin = 1e6 units) — concedida 1×/dia pelo runner (idempotente).
+ */
+const LEAGUES: Record<string, Record<string, unknown>> = {
+  bronze: {
+    name: 'BRONZE',
+    tier: 1,
+    minPowerUnits: 100 * 1_000, // 100 H/s
+    dailyRewardUnits: 50 * 1_000_000, // 50 coins
+    color: '#B0713B',
+    version: 1,
+  },
+  prata: {
+    name: 'PRATA',
+    tier: 2,
+    minPowerUnits: 500 * 1_000, // 500 H/s
+    dailyRewardUnits: 100 * 1_000_000, // 100 coins
+    color: '#C0C8D4',
+    version: 1,
+  },
+  ouro: {
+    name: 'OURO',
+    tier: 3,
+    minPowerUnits: 1_500 * 1_000, // 1.500 H/s
+    dailyRewardUnits: 250 * 1_000_000, // 250 coins
+    color: '#F5C542',
+    version: 1,
+  },
+  platina: {
+    name: 'PLATINA',
+    tier: 4,
+    minPowerUnits: 10_000 * 1_000, // 10.000 H/s
+    dailyRewardUnits: 500 * 1_000_000, // 500 coins
+    color: '#7FE3DE',
+    version: 1,
+  },
+  diamante: {
+    name: 'DIAMANTE',
+    tier: 5,
+    minPowerUnits: 100_000 * 1_000, // 100.000 H/s
+    dailyRewardUnits: 1_000 * 1_000_000, // 1.000 coins
+    color: '#5AA7FF',
+    version: 1,
+  },
+};
+
+/** Trilhas do passe (níveis 1..20) — recompensas em coins (× 1e6 = units). */
+function seasonTrack(baseCoins: number, stepCoins: number): Record<string, unknown>[] {
+  return Array.from({ length: 20 }, (_, i) => ({
+    level: i + 1,
+    reward: {
+      type: 'coins',
+      amountUnits: (baseCoins + stepCoins * i) * 1_000_000,
+    },
+  }));
+}
+
+/**
+ * TEMPORADA 01 — seasons/season-01 (create-if-absent). XP real calculado
+ * SOMENTE pelo backend (season_progress): partida = floor(score/divisor);
+ * claim de missão/conquista = bônus fixo. Nível derivado (linear, 1200 XP).
+ */
+function seasonDoc(): Record<string, unknown> {
+  const startAt = new Date();
+  const endAt = new Date(startAt.getTime() + 30 * 86_400_000);
+  return {
+    name: 'TEMPORADA 01',
+    startAt,
+    endAt,
+    economicRuleVersion: 1,
+    xpConfig: { matchScoreDivisor: 10, missionClaimXp: 50, achievementXp: 100 },
+    levelXp: 1200,
+    tracks: {
+      free: seasonTrack(100, 50),
+      premium: seasonTrack(500, 150),
+    },
+    version: 1,
+  };
+}
+
+/**
+ * Missões de TEMPORADA — missions/{id} kind='season' com periodKey fixo da
+ * temporada (não reiniciam por dia/semana). create-if-absent.
+ */
+const SEASON_MISSIONS: Record<string, Record<string, unknown>> = {
+  s01_play50: {
+    kind: 'season',
+    periodKey: 'season-01',
+    title: 'Jogue 50 partidas na temporada',
+    description: 'Complete 50 partidas durante a TEMPORADA 01.',
+    metric: 'plays',
+    target: 50,
+    rewardConfig: { type: 'coins', amountUnits: 300_000_000 }, // 300 coins
+    enabled: true,
+    version: 1,
+  },
+  s01_kills500: {
+    kind: 'season',
+    periodKey: 'season-01',
+    title: 'Destrua 500 inimigos na temporada',
+    description: 'Destrua 500 inimigos durante a TEMPORADA 01.',
+    metric: 'kills',
+    target: 500,
+    rewardConfig: { type: 'coins', amountUnits: 400_000_000 }, // 400 coins
+    enabled: true,
+    version: 1,
+  },
+  s01_claims10: {
+    kind: 'season',
+    periodKey: 'season-01',
+    title: 'Resgate 10 recompensas na temporada',
+    description: 'Resgate 10 recompensas de missões/conquistas na temporada.',
+    metric: 'claims',
+    target: 10,
+    rewardConfig: { type: 'coins', amountUnits: 250_000_000 }, // 250 coins
+    enabled: true,
+    version: 1,
+  },
+};
+
+/**
  * Catálogo de CONQUISTAS v1 — achievements/{id} (create-if-absent).
  * category: games | mining | collection | missions. Sem período (sem reset).
  */
@@ -436,6 +560,13 @@ async function main(): Promise<void> {
   }
   for (const [id, data] of Object.entries(ACHIEVEMENTS)) {
     console.log(`[seed] achievements/${id}: ${await createIfMissing(db, `achievements/${id}`, data)}`);
+  }
+  for (const [id, data] of Object.entries(LEAGUES)) {
+    console.log(`[seed] leagues/${id}: ${await createIfMissing(db, `leagues/${id}`, data)}`);
+  }
+  console.log(`[seed] seasons/season-01: ${await createIfMissing(db, 'seasons/season-01', seasonDoc())}`);
+  for (const [id, data] of Object.entries(SEASON_MISSIONS)) {
+    console.log(`[seed] missions/${id} (season): ${await createIfMissing(db, `missions/${id}`, data)}`);
   }
   console.log('[seed] done');
 }

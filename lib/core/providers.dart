@@ -4,8 +4,14 @@ import '../data/cache_policy.dart';
 import '../data/models/achievement_model.dart';
 import '../data/models/game_model.dart';
 import '../data/models/mission_model.dart';
+import '../data/models/power_model.dart';
 import '../data/repositories/achievements_repository.dart';
 import '../data/repositories/economy_repository.dart';
+import '../data/repositories/leagues_repository.dart';
+import '../data/repositories/leaderboard_repository.dart';
+import '../data/repositories/season_repository.dart';
+import '../data/models/league_model.dart';
+import '../data/models/season_model.dart';
 import '../data/repositories/game_sessions_repository.dart';
 import '../data/repositories/games_repository.dart';
 import '../data/repositories/machine_catalog_repository.dart';
@@ -65,6 +71,22 @@ final Provider<MiningRepositoryApi> miningRepositoryProvider =
     Provider<MiningRepositoryApi>(
   (Ref ref) => MiningRepository(ref.watch(cachePolicyProvider)),
 );
+
+/// Stream do poder próprio (`power/{uid}`) em tempo real. Tolerante a
+/// falhas: erro ⇒ null (estado vazio — nunca valor inventado).
+final StreamProvider<PowerModel?> powerStreamProvider =
+    StreamProvider<PowerModel?>((Ref ref) async* {
+  try {
+    final String? uid = await ref.watch(currentUidProvider.future);
+    if (uid == null) {
+      yield null;
+      return;
+    }
+    yield* ref.watch(powerRepositoryProvider).watchPower(uid);
+  } catch (_) {
+    yield null;
+  }
+});
 
 /// Stream do perfil próprio (`users/{uid}`) para consumo nas telas.
 ///
@@ -221,4 +243,95 @@ final Provider<int> claimablesCountProvider = Provider<int>((Ref ref) {
     }
   });
   return count;
+});
+
+/// Repositório de ligas (catálogo + liga do usuário), cache-first, só leitura.
+final Provider<LeaguesRepositoryApi> leaguesRepositoryProvider =
+    Provider<LeaguesRepositoryApi>(
+  (Ref ref) => LeaguesRepository(ref.watch(cachePolicyProvider)),
+);
+
+/// Repositório do ranking de ligas (maskedName — sem dados pessoais).
+final Provider<LeaderboardRepositoryApi> leaderboardRepositoryProvider =
+    Provider<LeaderboardRepositoryApi>(
+  (Ref ref) => LeaderboardRepository(),
+);
+
+/// Repositório de temporada (doc oficial + progresso), cache-first, só leitura.
+final Provider<SeasonRepositoryApi> seasonRepositoryProvider =
+    Provider<SeasonRepositoryApi>(
+  (Ref ref) => SeasonRepository(ref.watch(cachePolicyProvider)),
+);
+
+/// Catálogo de ligas ordenado por tier (vazio em caso de falha).
+final FutureProvider<List<LeagueModel>> leaguesCatalogProvider =
+    FutureProvider<List<LeagueModel>>((Ref ref) async {
+  try {
+    return await ref.watch(leaguesRepositoryProvider).loadLeagues();
+  } catch (_) {
+    return const <LeagueModel>[]; // estado vazio, nunca crash
+  }
+});
+
+/// Liga atual do usuário em tempo real (null = sem liga ainda). Tolerante.
+final StreamProvider<UserLeagueModel?> userLeagueStreamProvider =
+    StreamProvider<UserLeagueModel?>((Ref ref) async* {
+  try {
+    final String? uid = await ref.watch(currentUidProvider.future);
+    if (uid == null) {
+      yield null;
+      return;
+    }
+    yield* ref.watch(leaguesRepositoryProvider).watchUserLeague(uid);
+  } catch (_) {
+    yield null;
+  }
+});
+
+/// Ranking da liga atual do usuário (top 100 por poder). Tolerante: sem
+/// liga ou com falha ⇒ stream vazio (estado vazio na tela, nunca crash).
+// ignore: provider_type_args
+final leaderboardProvider =
+    StreamProvider.family<List<LeaderboardEntry>, String>((Ref ref, String leagueId) {
+  return ref.watch(leaderboardRepositoryProvider).watchLeaderboard(leagueId);
+});
+
+/// Doc oficial da temporada (null em caso de falha — estado vazio).
+final FutureProvider<SeasonModel?> seasonProvider =
+    FutureProvider<SeasonModel?>((Ref ref) async {
+  try {
+    return await ref.watch(seasonRepositoryProvider).loadSeason();
+  } catch (_) {
+    return null;
+  }
+});
+
+/// Progresso da temporada do usuário em tempo real (null = sem progresso).
+final StreamProvider<SeasonProgressModel?> seasonProgressStreamProvider =
+    StreamProvider<SeasonProgressModel?>((Ref ref) async* {
+  try {
+    final String? uid = await ref.watch(currentUidProvider.future);
+    if (uid == null) {
+      yield null;
+      return;
+    }
+    yield* ref.watch(seasonRepositoryProvider).watchSeasonProgress(uid);
+  } catch (_) {
+    yield null;
+  }
+});
+
+/// Missões de TEMPORADA (kind='season') + progresso em tempo real. Tolerante.
+final StreamProvider<List<MissionView>> seasonMissionsStreamProvider =
+    StreamProvider<List<MissionView>>((Ref ref) async* {
+  try {
+    final String? uid = await ref.watch(currentUidProvider.future);
+    if (uid == null) {
+      yield const <MissionView>[];
+      return;
+    }
+    yield* ref.watch(seasonRepositoryProvider).watchSeasonMissions(uid);
+  } catch (_) {
+    yield const <MissionView>[];
+  }
 });

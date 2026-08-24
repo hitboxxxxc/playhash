@@ -11,6 +11,7 @@ enum ProfileMenuOption {
   missions('Missões', Icons.flag_outlined),
   achievements('Conquistas', Icons.emoji_events_outlined),
   leagues('Ligas', Icons.leaderboard_outlined),
+  season('Temporada', Icons.calendar_month_outlined),
   referrals('Indicações', Icons.card_giftcard_outlined),
   settings('Configurações', Icons.settings_outlined),
   support('Suporte', Icons.help_outline),

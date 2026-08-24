@@ -23,7 +23,7 @@ import { FieldValue, Firestore, WriteBatch } from 'firebase-admin/firestore';
 // Períodos (PURO)
 // ---------------------------------------------------------------------------
 
-export type MissionKind = 'daily' | 'weekly';
+export type MissionKind = 'daily' | 'weekly' | 'season';
 
 /** Chave ISO-8601 de semana UTC: YYYY-Www (semana começa na segunda). */
 export function isoWeekKey(date: Date): string {
@@ -102,6 +102,8 @@ export interface MissionCatalogItem {
   metric: string;
   target: number;
   enabled: boolean;
+  /** periodKey fixo (missões de temporada); '' para daily/weekly. */
+  periodKey: string;
 }
 
 export interface AchievementCatalogItem {
@@ -136,7 +138,9 @@ export async function loadMissionCatalog(
   const snap = await db.collection('missions').get();
   const value: MissionCatalogItem[] = [];
   for (const doc of snap.docs) {
-    const kind = doc.get('kind') === 'weekly' ? 'weekly' : 'daily';
+    const rawKind = doc.get('kind');
+    const kind: MissionKind =
+      rawKind === 'weekly' ? 'weekly' : rawKind === 'season' ? 'season' : 'daily';
     const metric = doc.get('metric');
     const target = numOr0(doc.get('target'));
     if (typeof metric !== 'string' || metric.length === 0 || target <= 0) continue;
@@ -146,6 +150,8 @@ export async function loadMissionCatalog(
       metric,
       target,
       enabled: doc.get('enabled') === true,
+      // Temporada: periodKey fixo do doc; daily/weekly: resolvido por evento.
+      periodKey: kind === 'season' ? String(doc.get('periodKey') ?? '') : '',
     });
   }
   missionsCache = { value, loadedAt: Date.now() };
@@ -250,7 +256,13 @@ export async function bumpMissionProgress(
   const catalog = await loadMissionCatalog(db);
   const targets = catalog
     .filter((m) => m.enabled && m.metric === metric)
-    .map((m) => ({ id: m.id, target: m.target, periodKey: periodKeyFor(m.kind, nowMs) }));
+    .map((m) => ({
+      id: m.id,
+      target: m.target,
+      // Temporada usa o periodKey FIXO do catálogo; daily/weekly derivam do
+      // momento do evento (UTC).
+      periodKey: m.kind === 'season' ? m.periodKey : periodKeyFor(m.kind, nowMs),
+    }));
   return applyProgress(
     db,
     targets,

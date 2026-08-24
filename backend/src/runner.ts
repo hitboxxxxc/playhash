@@ -15,6 +15,8 @@ import { processGameSessions } from './processors/processGameSessions';
 import { processPurchaseIntents } from './processors/processPurchaseIntents';
 import { processClaims } from './processors/processClaims';
 import { closeBlocks } from './processors/closeBlocks';
+import { leagueSweep } from './processors/league_sweep';
+import { processSeasonProgress } from './processors/season_progress';
 import { getEconomyConfig } from './core/config';
 import { toInt } from './core/precision';
 import { writeAudit, auditEventId } from './core/audit';
@@ -135,13 +137,17 @@ async function main(): Promise<void> {
   }
 
   // Ordem: eventos de origem (sessões → compras) ANTES de claims (o claim
-  // valida o progresso mais recente) e por fim o fechamento de blocos
-  // (sweep de poder usa o totalPower já recalculado).
+  // valida o progresso mais recente); em seguida o XP da temporada (consome
+  // os flags seasonXpApplied de sessões/claims), o fechamento de blocos
+  // (sweep de poder usa o totalPower já recalculado) e por fim o sweep de
+  // LIGAS (atribuição + leaderboard + diária com o poder consolidado).
   const processors: Processor[] = [
     { name: 'gameSessions', run: processGameSessions },
     { name: 'purchaseIntents', run: processPurchaseIntents },
     { name: 'claims', run: processClaims },
+    { name: 'seasonProgress', run: processSeasonProgress },
     { name: 'closeBlocks', run: closeBlocks },
+    { name: 'leagueSweep', run: leagueSweep },
   ];
 
   let failures = 0;

@@ -132,6 +132,14 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // ---- Ranking de ligas: mantido EXCLUSIVAMENTE pelo backend -----------
+    // Entradas expõem APENAS maskedName (2 chars + '***') — nunca dados
+    // pessoais. Leitura autenticada; escrita SOMENTE Admin SDK.
+    match /leaderboards/{leagueId}/entries/{entryId} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+
     match /seasons/{docId} {
       allow read: if isSignedIn();
       allow write: if false;
@@ -218,7 +226,9 @@ service cloud.firestore {
              ['uid', 'kind', 'refId', 'clientRequestId', 'createdAt', 'status'])
         && request.resource.data.status == 'pending'
         && (request.resource.data.kind == 'mission'
-            || request.resource.data.kind == 'achievement')
+            || request.resource.data.kind == 'achievement'
+            || request.resource.data.kind == 'seasonFree'
+            || request.resource.data.kind == 'seasonPremium')
         && request.resource.data.refId is string
         && request.resource.data.refId.size() > 0
         && request.resource.data.refId.size() <= 64

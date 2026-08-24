@@ -15,6 +15,7 @@ const BASE = {
     target: 3,
     rewardUnits: 100_000_000n,
     kind: 'daily',
+    periodKey: '',
   },
   userItem: { progress: 3, claimed: false, periodKey: '2026-08-24' },
   currentPeriodKey: '2026-08-24',
@@ -82,7 +83,7 @@ describe('validateClaim', () => {
       ...BASE,
       kind: 'achievement' as const,
       refId: 'a_first_match',
-      catalog: { enabled: true, target: 1, rewardUnits: 50_000_000n, kind: '' },
+      catalog: { enabled: true, target: 1, rewardUnits: 50_000_000n, kind: '', periodKey: '' },
       userItem: { progress: 1, claimed: false, periodKey: '' },
       currentPeriodKey: '',
     };

@@ -155,12 +155,17 @@ class _MissionCardState extends ConsumerState<MissionCard> {
                   children: <Widget>[
                     SvgPicture.string(AppAssets.coinIconSvg, width: 16, height: 16),
                     const SizedBox(width: 6),
-                    Text(
-                      'Recompensa: ${_view.mission.rewardCoins} COIN',
-                      style: const TextStyle(
-                        color: AppColors.gold,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
+                    // Flexible: títulos/valores longos nunca estouram o card.
+                    Flexible(
+                      child: Text(
+                        'Recompensa: ${_view.mission.rewardCoins} COIN',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: AppColors.gold,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
                     ),
                   ],

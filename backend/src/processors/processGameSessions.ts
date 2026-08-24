@@ -222,6 +222,8 @@ async function handleSession(
 
     await sessionSnap.ref.update({
       processed: true,
+      // Consumido pelo processador de temporada (XP da partida).
+      seasonXpApplied: false,
       serverResult: {
         status: created ? 'granted' : 'already_granted',
         powerAmount: result.powerAmount.toString(),
