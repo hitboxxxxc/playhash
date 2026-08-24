@@ -18,6 +18,17 @@ function sanitize(err: unknown): string {
   return String((err as Error)?.message ?? err).slice(0, 300);
 }
 
+/**
+ * Serialização segura para log: converte BigInt para string em vez de
+ * lançar "Do not know how to serialize a BigInt" (que marcava o
+ * processador como FAILED mesmo após sucesso econômico).
+ */
+export function serializeForLog(value: unknown): string {
+  return JSON.stringify(value, (_key, v: unknown) =>
+    typeof v === 'bigint' ? v.toString() : v,
+  );
+}
+
 async function main(): Promise<void> {
   const startedAt = Date.now();
   const { db, projectId } = initAdmin();
@@ -33,7 +44,7 @@ async function main(): Promise<void> {
   for (const p of processors) {
     try {
       const result = await p.run(db);
-      console.log(`[runner] ${p.name} ok=${JSON.stringify(result)}`);
+      console.log(`[runner] ${p.name} ok=${serializeForLog(result)}`);
     } catch (err) {
       failures += 1;
       console.error(`[runner] ${p.name} FAILED=${sanitize(err)}`);
@@ -44,7 +55,10 @@ async function main(): Promise<void> {
   process.exitCode = failures > 0 ? 1 : 0;
 }
 
-main().catch((err) => {
-  console.error(`[runner] fatal=${sanitize(err)}`);
-  process.exitCode = 1;
-});
+// Executa apenas quando invocado diretamente (não em imports de teste).
+if (require.main === module) {
+  main().catch((err) => {
+    console.error(`[runner] fatal=${sanitize(err)}`);
+    process.exitCode = 1;
+  });
+}

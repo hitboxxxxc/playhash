@@ -63,6 +63,13 @@ jobs:
         working-directory: backend
         run: npm run build
 
+      - name: Ensure Firestore indexes (idempotente)
+        if: github.event_name != 'workflow_dispatch' || inputs.action == 'run'
+        working-directory: backend
+        env:
+          GOOGLE_CLOUD_PROJECT: playhash-70742
+        run: node dist/ensureIndexes.js
+
       - name: Seed Firestore (dev)
         if: github.event_name == 'workflow_dispatch' && inputs.action == 'seed'
         working-directory: backend
