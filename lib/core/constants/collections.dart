@@ -19,6 +19,10 @@ abstract final class Collections {
   // Intenções de compra (cliente SÓ cria; validação 100% no runner).
   static const String purchaseIntents = 'purchaseIntents';
 
+  // Intenções de resgate de missões/conquistas (cliente SÓ cria a intenção;
+  // a recompensa é concedida EXCLUSIVAMENTE pelo runner — doc 05 §42).
+  static const String claims = 'claims';
+
   // Configs públicas: catálogo de máquinas (config/catalog/machines — 4
   // segmentos, par obrigatório p/ docs) e economia (config/economy — somente
   // leitura de campos públicos como machineSlots).

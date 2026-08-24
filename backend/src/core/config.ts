@@ -31,6 +31,7 @@ function parseLimits(raw: unknown): EconomyLimits {
   return {
     maxSessionsPerDay: num(r.maxSessionsPerDay, 50, 1, 'maxSessionsPerDay'),
     maxPurchaseIntentsPerDay: num(r.maxPurchaseIntentsPerDay, 20, 1, 'maxPurchaseIntentsPerDay'),
+    maxClaimsPerDay: num(r.maxClaimsPerDay, 20, 1, 'maxClaimsPerDay'),
     minSessionDurationMs: num(r.minSessionDurationMs, 5_000, 0, 'minSessionDurationMs'),
     maxSessionDurationMs: num(r.maxSessionDurationMs, 3_600_000, 1, 'maxSessionDurationMs'),
     maxScorePerSecond: num(r.maxScorePerSecond, 100, 1, 'maxScorePerSecond'),

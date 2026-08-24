@@ -13,6 +13,8 @@ export interface EconomyLimits {
   maxSessionsPerDay: number;
   /** Máximo de intenções de compra processadas por usuário por dia (UTC). */
   maxPurchaseIntentsPerDay: number;
+  /** Máximo de claims (missões/conquistas) concedidos por usuário por dia (UTC). */
+  maxClaimsPerDay: number;
   /** Duração mínima aceitável de sessão (ms). */
   minSessionDurationMs: number;
   /** Duração máxima aceitável de sessão (ms). */
@@ -70,6 +72,8 @@ export interface GameConfiguration {
   powerCapPerSessionBaseUnits: number;
   /** 'linear_cap' | '' (legado). */
   powerFormula: string;
+  /** Pontos por abate (0 = game sem contagem de inimigos). */
+  pointsPerKill: number;
 }
 
 export interface GameDoc {
@@ -139,6 +143,9 @@ export type AuditEventType =
   | 'BLOCK_CREATED'
   | 'BLOCK_FINALIZED'
   | 'REWARD_CREDITED'
+  | 'MISSION_REWARD_GRANTED'
+  | 'ACHIEVEMENT_REWARD_GRANTED'
+  | 'CLAIM_REJECTED'
   | 'DEV_TOPUP';
 
 export interface ProcessingSummary {

@@ -19,6 +19,7 @@ import { recalcPower } from '../core/power';
 import { writeAudit, auditEventId } from '../core/audit';
 import { findDoneIntentByClientRequestId } from '../core/idempotency';
 import { incrementDailyCounter, readDailyCounter } from '../core/ratelimit';
+import { bumpAchievementProgress, bumpMissionProgress } from './mission_progress';
 
 // ---------------------------------------------------------------------------
 // Validação PURA (unit-testável)
@@ -254,6 +255,15 @@ async function handleIntent(
         createdAt: FieldValue.serverTimestamp(),
         referenceId: intentId,
       });
+    // Progresso de missões/conquistas a partir da compra REAL concluída
+    // (transação done ⇒ idempotente; reexecução cai no 'skip'/'rejected').
+    await bumpMissionProgress(db, intent.uid, 'buys', 'add', 1, nowMs);
+    // Máquinas owned recalculadas (conquistas a_machines_1/a_machines_5).
+    const ownedSnap = await db
+      .collection(`machines/${intent.uid}/items`)
+      .limit(1000)
+      .get();
+    await bumpAchievementProgress(db, intent.uid, 'machines', 'max', ownedSnap.size);
     await incrementDailyCounter(db, intent.uid, 'intents', nowMs);
     return 'granted';
   } catch (err) {

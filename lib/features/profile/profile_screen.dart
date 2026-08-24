@@ -42,6 +42,10 @@ class ProfileScreen extends ConsumerWidget {
     switch (option) {
       case ProfileMenuOption.settings:
         context.push(RoutePaths.settings);
+      case ProfileMenuOption.missions:
+        context.push(RoutePaths.missions);
+      case ProfileMenuOption.achievements:
+        context.push(RoutePaths.achievements);
       default:
         context.push(
           '${RoutePaths.comingSoon}?titulo=${Uri.encodeComponent(option.title)}',

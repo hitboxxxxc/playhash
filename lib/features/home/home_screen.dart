@@ -16,6 +16,7 @@ import '../../data/models/power_model.dart';
 import '../../data/models/wallet_model.dart';
 import 'widgets/home_header.dart';
 import 'widgets/machine_room_grid.dart';
+import 'widgets/missions_shortcut_card.dart';
 import 'widgets/power_summary_card.dart';
 import 'widgets/quick_stats_row.dart';
 
@@ -206,6 +207,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
           totalPower: _power?.totalPower,
           permanentPower: _power?.permanentPower,
         ),
+        const SizedBox(height: 20),
+        const MissionsShortcutCard(),
         const SizedBox(height: 20),
         MachineRoomGrid(
           machines: _machines,

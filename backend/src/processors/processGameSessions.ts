@@ -14,6 +14,11 @@ import { getEconomyConfig } from '../core/config';
 import { createTempGrant, recalcPower } from '../core/power';
 import { writeAudit, auditEventId } from '../core/audit';
 import { incrementDailyCounter, readDailyCounter } from '../core/ratelimit';
+import {
+  bumpAchievementProgress,
+  bumpMissionProgress,
+  validateKillsConsistency,
+} from './mission_progress';
 
 // ---------------------------------------------------------------------------
 // Validação PURA (unit-testável)
@@ -24,6 +29,8 @@ export interface SessionValidationInput {
   startedAtMs: number;
   finishedAtMs: number;
   score: unknown;
+  /** Abates reportados pelo cliente (opcional; validado contra score). */
+  kills?: unknown;
   game: GameDoc | null;
   limits: EconomyConfig['limits'];
   defaultPowerBaseReward: number;
@@ -93,6 +100,12 @@ export function validateGameSession(input: SessionValidationInput): SessionValid
     return { ok: false, reason: 'SCORE_RATE_EXCEEDED' };
   }
 
+  // kills (opcional): inteiro ≥ 0 e kills × pointsPerKill ≤ score — cada
+  // abate vale PELO MENOS pointsPerKill (bônus só somam). Espelho da regra
+  // nas security rules (get() na config do game).
+  const killsError = validateKillsConsistency(input.kills, input.score, cfg.pointsPerKill);
+  if (killsError) return { ok: false, reason: killsError };
+
   if (input.sessionsToday >= limits.maxSessionsPerDay) {
     return { ok: false, reason: 'DAILY_LIMIT_REACHED' };
   }
@@ -129,6 +142,7 @@ async function loadGame(db: Firestore, gameId: unknown): Promise<GameDoc | null>
         minDurationSeconds: Number(rawCfg.minDurationSeconds ?? 0),
         powerCapPerSessionBaseUnits: Number(rawCfg.powerCapPerSessionBaseUnits ?? 0),
         powerFormula: typeof rawCfg.powerFormula === 'string' ? rawCfg.powerFormula : '',
+        pointsPerKill: Number(rawCfg.pointsPerKill ?? 0),
       }
     : null;
   if (configuration && configuration.maxExpectedScore <= 0) return {
@@ -161,6 +175,7 @@ async function handleSession(
       startedAtMs: toMillisSafe(data.startedAt),
       finishedAtMs: toMillisSafe(data.finishedAt),
       score: data.score,
+      kills: data.kills,
       game,
       limits: economy.limits,
       defaultPowerBaseReward: economy.powerBasePerHs,
@@ -242,7 +257,21 @@ async function handleSession(
       });
     }
 
-    if (created) await incrementDailyCounter(db, uid, 'sessions', nowMs);
+    // Progresso de missões/conquistas a partir do evento REAL consolidado
+    // (somente quando o grant foi criado — idempotente por sessionId).
+    if (created) {
+      const kills = typeof data.kills === 'number' && Number.isSafeInteger(data.kills) && data.kills > 0
+        ? data.kills
+        : 0;
+      const finalScore = typeof data.score === 'number' ? data.score : 0;
+      await bumpMissionProgress(db, uid, 'plays', 'add', 1, nowMs);
+      await bumpMissionProgress(db, uid, 'max_score', 'max', finalScore, nowMs);
+      if (kills > 0) await bumpMissionProgress(db, uid, 'kills', 'add', kills, nowMs);
+      await bumpAchievementProgress(db, uid, 'plays', 'add', 1);
+      await bumpAchievementProgress(db, uid, 'max_score', 'max', finalScore);
+      if (kills > 0) await bumpAchievementProgress(db, uid, 'kills', 'add', kills);
+      await incrementDailyCounter(db, uid, 'sessions', nowMs);
+    }
     return 'granted';
   } catch (err) {
     // Falha operacional: NÃO marca processed (retry na próxima execução).

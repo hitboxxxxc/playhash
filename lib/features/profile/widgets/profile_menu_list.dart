@@ -8,6 +8,7 @@ enum ProfileMenuOption {
   account('Minha conta', Icons.person_outline),
   wallet('Carteira', Icons.account_balance_wallet_outlined),
   history('Histórico', Icons.history),
+  missions('Missões', Icons.flag_outlined),
   achievements('Conquistas', Icons.emoji_events_outlined),
   leagues('Ligas', Icons.leaderboard_outlined),
   referrals('Indicações', Icons.card_giftcard_outlined),

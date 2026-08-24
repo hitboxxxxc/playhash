@@ -3,12 +3,14 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../features/achievements/achievements_screen.dart';
 import '../../features/auth/forgot_password_screen.dart';
 import '../../features/auth/login_screen.dart';
 import '../../features/auth/register_screen.dart';
 import '../../features/common/coming_soon_screen.dart';
 import '../../features/games/games_screen.dart';
 import '../../features/home/home_screen.dart';
+import '../../features/missions/missions_screen.dart';
 import '../../features/mining/mining_screen.dart';
 import '../../features/profile/profile_screen.dart';
 import '../../features/settings/settings_screen.dart';
@@ -34,6 +36,8 @@ abstract final class RoutePaths {
 
   // Telas empurradas a partir das abas (fora da shell, mas autenticadas).
   static const String settings = '/app/settings';
+  static const String missions = '/app/missions';
+  static const String achievements = '/app/achievements';
 }
 
 /// Cria o roteador do app.
@@ -86,6 +90,14 @@ GoRouter createAppRouter({AuthServiceApi? auth, String? initialLocation}) {
       GoRoute(
         path: RoutePaths.settings,
         builder: (_, _) => const SettingsScreen(),
+      ),
+      GoRoute(
+        path: RoutePaths.missions,
+        builder: (_, _) => const MissionsScreen(),
+      ),
+      GoRoute(
+        path: RoutePaths.achievements,
+        builder: (_, _) => const AchievementsScreen(),
       ),
       StatefulShellRoute.indexedStack(
         builder: (_, _, StatefulNavigationShell navigationShell) =>

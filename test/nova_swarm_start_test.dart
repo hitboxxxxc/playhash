@@ -59,6 +59,7 @@ class _FakeSessionsRepo implements GameSessionsRepositoryApi {
   Future<void> finishSession({
     required String sessionId,
     required int score,
+    int? kills,
   }) async {}
 
   @override

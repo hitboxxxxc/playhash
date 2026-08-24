@@ -37,6 +37,20 @@ service cloud.firestore {
       return 'maxScore' in cfg ? cfg.maxScore : cfg.maxExpectedScore;
     }
 
+    // Pontos por abate do game (0 = game sem contagem de inimigos/legado).
+    function gamePointsPerKill(gameId) {
+      let cfg = get(/databases/$(database)/documents/games/$(gameId)).data.configuration;
+      return 'pointsPerKill' in cfg ? cfg.pointsPerKill : 0;
+    }
+
+    // kills consistente com o score: cada abate vale PELO MENOS
+    // pointsPerKill (bônus só somam) ⇒ kills × pointsPerKill ≤ score.
+    // Espelho EXATO da validação do runner (validateKillsConsistency).
+    function killsConsistent(gameId, kills, score) {
+      return kills == 0
+        || (gamePointsPerKill(gameId) > 0 && kills * gamePointsPerKill(gameId) <= score);
+    }
+
     // Cota diária de intenções (contador mantido PELO BACKEND em rateLimits/{uid}).
     // Doc ausente => primeira intenção do dia é permitida; o backend passa a
     // incrementar a partir daí. Janela de corrida aceitável (documentada).
@@ -144,17 +158,23 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/games/$(request.resource.data.gameId)).data.enabled == true;
 
       // UPDATE: owner, UMA vez, open→finished, score inteiro dentro da
-      // configuração do game, finishedAt ≈ agora. Campos admin (processed,
-      // serverResult) JAMAIS escritos pelo cliente.
+      // configuração do game, kills consistente (opcional), finishedAt ≈
+      // agora. Campos admin (processed, serverResult) JAMAIS do cliente.
       allow update: if isSignedIn()
         && resource.data.uid == request.auth.uid
         && resource.data.status == 'open'
         && request.resource.data.status == 'finished'
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(
-             ['status', 'score', 'finishedAt'])
+             ['status', 'score', 'finishedAt', 'kills'])
         && request.resource.data.score is int
         && request.resource.data.score >= 0
         && request.resource.data.score <= gameMaxScore(resource.data.gameId)
+        && (!('kills' in request.resource.data)
+            || (request.resource.data.kills is int
+                && request.resource.data.kills >= 0
+                && killsConsistent(resource.data.gameId,
+                                   request.resource.data.kills,
+                                   request.resource.data.score)))
         && withinTolerance(request.resource.data.finishedAt);
 
       allow delete: if false;
@@ -180,6 +200,32 @@ service cloud.firestore {
         && exists(/databases/$(database)/documents/config/catalog/machines/$(request.resource.data.machineId))
         && get(/databases/$(database)/documents/config/catalog/machines/$(request.resource.data.machineId)).data.enabled == true
         && dailyQuotaOk(request.auth.uid, 'pi', 20);
+
+      allow update, delete: if false;
+    }
+
+    // ---- Claims (missões/conquistas): cliente só CRIA a intenção --------
+    // Doc id = clientRequestId (UUID v4) ⇒ retry offline reescreve o MESMO
+    // doc (idempotência; update é negado). A RECOMPENSA é concedida
+    // EXCLUSIVAMENTE pelo runner (transação auditada) — nunca pelo cliente.
+    match /claims/{claimId} {
+      allow read: if isSignedIn()
+        && resource.data.uid == request.auth.uid;
+
+      allow create: if isSignedIn()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.keys().hasOnly(
+             ['uid', 'kind', 'refId', 'clientRequestId', 'createdAt', 'status'])
+        && request.resource.data.status == 'pending'
+        && (request.resource.data.kind == 'mission'
+            || request.resource.data.kind == 'achievement')
+        && request.resource.data.refId is string
+        && request.resource.data.refId.size() > 0
+        && request.resource.data.refId.size() <= 64
+        && request.resource.data.clientRequestId == claimId
+        && request.resource.data.clientRequestId.size() >= 8
+        && request.resource.data.clientRequestId.size() <= 128
+        && withinTolerance(request.resource.data.createdAt);
 
       allow update, delete: if false;
     }

@@ -41,6 +41,13 @@ export const INDEX_SPECS: readonly IndexSpec[] = [
       { fieldPath: 'createdAt', order: 'ASCENDING' },
     ],
   },
+  {
+    collectionGroup: 'claims',
+    fields: [
+      { fieldPath: 'status', order: 'ASCENDING' },
+      { fieldPath: 'createdAt', order: 'ASCENDING' },
+    ],
+  },
 ] as const;
 
 const CREATE_TIMEOUT_MS = 180_000;

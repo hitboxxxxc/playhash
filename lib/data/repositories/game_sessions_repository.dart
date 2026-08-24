@@ -13,12 +13,14 @@ abstract interface class GameSessionsRepositoryApi {
     required String clientVersion,
   });
 
-  /// Fecha a sessão num ÚNICO update open→finished {score, finishedAt}.
-  /// Idempotente: se já estiver finished (retry pós-instabilidade), trata
-  /// como sucesso.
+  /// Fecha a sessão num ÚNICO update open→finished {score, kills,
+  /// finishedAt}. `kills` é OPCIONAL (games sem contagem de inimigos não
+  /// enviam). Idempotente: se já estiver finished (retry pós-instabilidade),
+  /// trata como sucesso.
   Future<void> finishSession({
     required String sessionId,
     required int score,
+    int? kills,
   });
 
   /// Observa o doc da própria sessão (processed/serverResult do backend).
@@ -66,12 +68,14 @@ class GameSessionsRepository implements GameSessionsRepositoryApi {
   Future<void> finishSession({
     required String sessionId,
     required int score,
+    int? kills,
   }) async {
     final DocumentReference<Map<String, dynamic>> ref = _sessions.doc(sessionId);
     try {
       await ref.update(<String, dynamic>{
         'status': 'finished',
         'score': score,
+        'kills': ?kills,
         'finishedAt': FieldValue.serverTimestamp(),
       });
     } on FirebaseException catch (e) {

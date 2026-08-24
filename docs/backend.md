@@ -205,3 +205,51 @@ settings, termsAcceptedAt`) — conforme `firestore.rules`.
 4. `firebase.json` adicionado na raiz para `firebase deploy
    --only firestore:rules` apontar para `firestore.rules` +
    `firestore.indexes.json`.
+
+## 7. Apêndice — Missões + Conquistas (2026-08-24)
+
+### A. Catálogos (seed, create-if-absent)
+
+- `missions/{id}` v1: `m_daily_play3` (3 partidas → 100), `m_daily_points2k`
+  (2.000 pts numa partida → 150), `m_daily_kills30` (30 inimigos/dia → 200),
+  `m_weekly_play20` (20 partidas/semana → 500), `m_weekly_buy1`
+  (1 máquina/semana → 300). Campos: `{kind, title, description, metric,
+  target, rewardConfig:{type:'coins',amountUnits}, enabled, version}`.
+- `achievements/{id}` v1: `a_first_match` (1 partida, 50), `a_kills_100`
+  (100, 200), `a_score_10k` (10k pts/1 partida, 300), `a_power_100` (100 H/s,
+  100), `a_power_1k` (1.000 H/s, 400), `a_machines_1` (1, 100), `a_machines_5`
+  (5, 500), `a_claims_10` (10 resgates, 250).
+
+### B. Progresso (somente runner — `processors/mission_progress.ts`)
+
+- Missões: `userMissions/{uid}/items/{missionId}` com `periodKey`
+  (daily = YYYY-MM-DD UTC; weekly = YYYY-Www ISO) — troca de período reinicia.
+- Conquistas: `userAchievements/{uid}/items/{id}` sem reset.
+- Eventos: `processGameSessions` (plays +1, max_score = máx da partida,
+  kills += session.kills), `processPurchaseIntents` (buys +1; machines =
+  total owned), `closeBlocks` (sweep de power H/s), `processClaims`
+  (claims +1 ao conceder). Idempotência herdada das guardas dos eventos.
+
+### C. Claims (recompensa 100% no backend)
+
+- Cliente cria `claims/{clientRequestId}` `{uid, kind, refId,
+  clientRequestId, createdAt, status:'pending'}` (rules: campos exatos,
+  update/delete negados). O cliente NUNCA credita saldo (doc 05 §42).
+- `processClaims` (ordem do runner: sessions → purchases → claims →
+  closeBlocks): valida catálogo/enabled/período/progresso, rate limit
+  `limits.maxClaimsPerDay` (default 20), transação credita wallet + marca
+  `claimed`, auditoria `MISSION_REWARD_GRANTED`/`ACHIEVEMENT_REWARD_GRANTED`
+  (ou `CLAIM_REJECTED` com código seguro), espelho
+  `rewards/{uid}/items/CLAIM_{id}`.
+- Índice composto novo: `claims (status ASC, createdAt ASC)` — declarado em
+  `firestore.indexes.json` e criado por `ensureIndexes.ts`.
+
+### D. kills na sessão
+
+- `gameSessions` aceita `kills` int ≥ 0 no finish com teto
+  `kills × pointsPerKill ≤ score` (validado no runner E nas rules via
+  `get()` na config do game — espelho exato). NOVA SWARM envia kills;
+  games legados continuam válidos sem o campo.
+- **Nota**: a pendência de publicação de rules do §6.C.3 foi RESOLVIDA —
+  `firebase deploy --only firestore:rules --project playhash-70742`
+  executado com sucesso (inclui claims + kills).

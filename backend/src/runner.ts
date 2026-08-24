@@ -13,6 +13,7 @@ import { FieldValue, Firestore } from 'firebase-admin/firestore';
 import { initAdmin } from './admin';
 import { processGameSessions } from './processors/processGameSessions';
 import { processPurchaseIntents } from './processors/processPurchaseIntents';
+import { processClaims } from './processors/processClaims';
 import { closeBlocks } from './processors/closeBlocks';
 import { getEconomyConfig } from './core/config';
 import { toInt } from './core/precision';
@@ -133,9 +134,13 @@ async function main(): Promise<void> {
     return;
   }
 
+  // Ordem: eventos de origem (sessões → compras) ANTES de claims (o claim
+  // valida o progresso mais recente) e por fim o fechamento de blocos
+  // (sweep de poder usa o totalPower já recalculado).
   const processors: Processor[] = [
     { name: 'gameSessions', run: processGameSessions },
     { name: 'purchaseIntents', run: processPurchaseIntents },
+    { name: 'claims', run: processClaims },
     { name: 'closeBlocks', run: closeBlocks },
   ];
 

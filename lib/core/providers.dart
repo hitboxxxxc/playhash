@@ -1,17 +1,22 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../data/cache_policy.dart';
+import '../data/models/achievement_model.dart';
 import '../data/models/game_model.dart';
+import '../data/models/mission_model.dart';
+import '../data/repositories/achievements_repository.dart';
 import '../data/repositories/economy_repository.dart';
 import '../data/repositories/game_sessions_repository.dart';
 import '../data/repositories/games_repository.dart';
 import '../data/repositories/machine_catalog_repository.dart';
 import '../data/repositories/machines_repository.dart';
+import '../data/repositories/missions_repository.dart';
 import '../data/repositories/mining_repository.dart';
 import '../data/repositories/power_repository.dart';
 import '../data/repositories/profile_repository.dart';
 import '../data/repositories/wallet_repository.dart';
 import 'services/auth_service.dart';
+import 'services/claim_service.dart';
 import 'services/cloud_functions_service.dart';
 import 'services/game_session_service.dart';
 import 'services/purchase_intent_service.dart';
@@ -149,4 +154,71 @@ final bestScoreProvider =
   } catch (_) {
     return 0; // sem dado confiável ⇒ 0, nunca valor inventado
   }
+});
+
+/// Repositório de missões (catálogo + progresso do usuário), cache-first.
+final Provider<MissionsRepositoryApi> missionsRepositoryProvider =
+    Provider<MissionsRepositoryApi>(
+  (Ref ref) => MissionsRepository(ref.watch(cachePolicyProvider)),
+);
+
+/// Repositório de conquistas (catálogo + progresso do usuário), cache-first.
+final Provider<AchievementsRepositoryApi> achievementsRepositoryProvider =
+    Provider<AchievementsRepositoryApi>(
+  (Ref ref) => AchievementsRepository(ref.watch(cachePolicyProvider)),
+);
+
+/// Serviço de resgate de missões/conquistas (idempotente por clientRequestId).
+final Provider<ClaimService> claimServiceProvider =
+    Provider<ClaimService>((Ref ref) => ClaimService());
+
+/// Missões combinadas (catálogo + progresso) em tempo real. Tolerante a
+/// falhas: qualquer erro vira stream vazio — estado vazio, nunca crash.
+final StreamProvider<List<MissionView>> missionsStreamProvider =
+    StreamProvider<List<MissionView>>((Ref ref) async* {
+  try {
+    final String? uid = await ref.watch(currentUidProvider.future);
+    if (uid == null) {
+      yield const <MissionView>[];
+      return;
+    }
+    yield* ref.watch(missionsRepositoryProvider).watchMissions(uid);
+  } catch (_) {
+    yield const <MissionView>[];
+  }
+});
+
+/// Conquistas combinadas (catálogo + progresso) em tempo real. Tolerante.
+final StreamProvider<List<AchievementView>> achievementsStreamProvider =
+    StreamProvider<List<AchievementView>>((Ref ref) async* {
+  try {
+    final String? uid = await ref.watch(currentUidProvider.future);
+    if (uid == null) {
+      yield const <AchievementView>[];
+      return;
+    }
+    yield* ref.watch(achievementsRepositoryProvider).watchAchievements(uid);
+  } catch (_) {
+    yield const <AchievementView>[];
+  }
+});
+
+/// Quantidade de recompensas PRONTAS para resgate (missões + conquistas) —
+/// badge do atalho da HOME. Tolerante a falhas (0 sem dado confiável).
+final Provider<int> claimablesCountProvider = Provider<int>((Ref ref) {
+  int count = 0;
+  final AsyncValue<List<MissionView>> missions = ref.watch(missionsStreamProvider);
+  missions.whenData((List<MissionView> list) {
+    for (final MissionView m in list) {
+      if (m.isClaimable) count += 1;
+    }
+  });
+  final AsyncValue<List<AchievementView>> achievements =
+      ref.watch(achievementsStreamProvider);
+  achievements.whenData((List<AchievementView> list) {
+    for (final AchievementView a in list) {
+      if (a.isClaimable) count += 1;
+    }
+  });
+  return count;
 });

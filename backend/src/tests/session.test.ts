@@ -12,6 +12,7 @@ import { EconomyLimits } from '../core/types';
 const LIMITS: EconomyLimits = {
   maxSessionsPerDay: 3,
   maxPurchaseIntentsPerDay: 20,
+  maxClaimsPerDay: 20,
   minSessionDurationMs: 5_000,
   maxSessionDurationMs: 120_000,
   maxScorePerSecond: 20,
@@ -33,6 +34,7 @@ const GAME = {
     minDurationSeconds: 0,
     powerCapPerSessionBaseUnits: 0,
     powerFormula: '',
+    pointsPerKill: 0,
   },
 };
 
@@ -59,6 +61,38 @@ const NOVA_SWARM = {
     powerFormula: 'linear_cap',
   },
 };
+
+describe('validateGameSession — kills (consistência com score)', () => {
+  function novaInput(overrides: Partial<Parameters<typeof validateGameSession>[0]> = {}) {
+    return baseInput({ game: NOVA_SWARM, score: 6_000, ...overrides });
+  }
+
+  it('aceita kills coerente: kills × pointsPerKill ≤ score', () => {
+    // 10 kills × 150 = 1500 ≤ 6000 (resto vem de hits/waveBonus)
+    expect(validateGameSession(novaInput({ kills: 10 })).ok).toBe(true);
+    // kills ausente (games legados) continua válido
+    expect(validateGameSession(novaInput()).ok).toBe(true);
+    // 0 kills é válido
+    expect(validateGameSession(novaInput({ kills: 0 })).ok).toBe(true);
+  });
+
+  it('rejeita kills inválido (negativo, fracionário, não-número)', () => {
+    expect(reasonOf(validateGameSession(novaInput({ kills: -1 })))).toBe('KILLS_INVALID');
+    expect(reasonOf(validateGameSession(novaInput({ kills: 2.5 })))).toBe('KILLS_INVALID');
+    expect(reasonOf(validateGameSession(novaInput({ kills: '10' })))).toBe('KILLS_INVALID');
+  });
+
+  it('rejeita kills inconsistente: kills × pointsPerKill > score', () => {
+    // 41 × 150 = 6150 > 6000
+    expect(reasonOf(validateGameSession(novaInput({ kills: 41 })))).toBe('KILLS_INCONSISTENT');
+    // exatamente igual é válido: 40 × 150 = 6000
+    expect(validateGameSession(novaInput({ kills: 40 })).ok).toBe(true);
+  });
+
+  it('rejeita kills > 0 em game SEM pointsPerKill (legado)', () => {
+    expect(reasonOf(validateGameSession(baseInput({ kills: 3 })))).toBe('KILLS_NOT_SUPPORTED');
+  });
+});
 
 function baseInput(overrides: Partial<Parameters<typeof validateGameSession>[0]> = {}) {
   return {
@@ -159,6 +193,7 @@ describe('validateGameSession', () => {
         minDurationSeconds: 0,
         powerCapPerSessionBaseUnits: 0,
         powerFormula: '',
+        pointsPerKill: 0,
       },
     };
     // floor(500 × 1000 / 1000) = 500

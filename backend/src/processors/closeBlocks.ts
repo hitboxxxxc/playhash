@@ -16,6 +16,7 @@ import { getEconomyConfig } from '../core/config';
 import { toInt, distributeBlockReward, PowerEntry } from '../core/precision';
 import { writeAudit, auditEventId } from '../core/audit';
 import { txIdFor } from '../core/idempotency';
+import { sweepPowerAchievements } from './mission_progress';
 
 interface BlockTotals {
   networkPower: bigint;
@@ -187,6 +188,18 @@ export async function finalizePeriod(
   const users = await loadUserPowers(db, economy.limits.maxUsersPerBlock);
   const effectiveReward = economy.blockRewardUnits + economy.residueUnits;
   const distribution = distributeBlockReward(effectiveReward, users);
+
+  // 2b. Sweep de conquistas de PODER (a_power_100/a_power_1k) a partir do
+  // totalPower REAL consolidado. Falha aqui NUNCA impede o fechamento.
+  try {
+    await sweepPowerAchievements(
+      db,
+      users.map((u) => ({ uid: u.uid, powerUnits: u.power })),
+      economy.powerBasePerHs,
+    );
+  } catch (err) {
+    console.error(`[closeBlocks] powerAchievements sweep failed: ${String((err as Error)?.message ?? err).slice(0, 200)}`);
+  }
 
   // 3. Credita usuários (batches, idempotente por txId).
   await creditUsers(db, periodKey, distribution.rewards, currencyId, ruleVersion);

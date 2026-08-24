@@ -214,7 +214,7 @@ class _NovaSwarmScreenState extends ConsumerState<NovaSwarmScreen>
     });
   }
 
-  Future<void> _sendScore(int score) async {
+  Future<void> _sendScore(int score, {int? kills}) async {
     final String? sessionId = _sessionId;
     if (sessionId == null || _finishing) return;
     _finishing = true;
@@ -222,7 +222,7 @@ class _NovaSwarmScreenState extends ConsumerState<NovaSwarmScreen>
     try {
       await ref
           .read(gameSessionServiceProvider)
-          .finishSession(sessionId: sessionId, score: score);
+          .finishSession(sessionId: sessionId, score: score, kills: kills);
       if (!mounted) return;
       setState(() => _resultStage = ResultStage.validating);
       _listenServerResult(sessionId);
@@ -415,7 +415,7 @@ class _NovaSwarmScreenState extends ConsumerState<NovaSwarmScreen>
                   onCollect:
                       (_resultStage == ResultStage.idle ||
                               _resultStage == ResultStage.sendFailed)
-                          ? () => _sendScore(s.score)
+                          ? () => _sendScore(s.score, kills: s.kills)
                           : null,
                   onBack: () => Navigator.of(context).pop(),
                 ),

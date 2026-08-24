@@ -146,6 +146,151 @@ const NOVA_SWARM_V2_CONFIGURATION: Record<string, unknown> = {
   powerupDurations: { shieldSeconds: 6, doubleSeconds: 8 },
 };
 
+/**
+ * Catálogo de MISSÕES v1 — missions/{id} (create-if-absent; nunca sobrescreve).
+ * metric: plays (partidas) · max_score (máx da partida) · kills (acumulado) ·
+ * buys (compras). rewardConfig.amountUnits em UNITS (1 coin = 1e6 units).
+ */
+const MISSIONS: Record<string, Record<string, unknown>> = {
+  'm_daily_play3': {
+    kind: 'daily',
+    title: 'Jogue 3 partidas',
+    description: 'Complete 3 partidas hoje.',
+    metric: 'plays',
+    target: 3,
+    rewardConfig: { type: 'coins', amountUnits: 100_000_000 }, // 100 coins
+    enabled: true,
+    version: 1,
+  },
+  'm_daily_points2k': {
+    kind: 'daily',
+    title: 'Faça 2.000 pontos em uma partida',
+    description: 'Alcance 2.000 pontos em uma única partida.',
+    metric: 'max_score',
+    target: 2_000,
+    rewardConfig: { type: 'coins', amountUnits: 150_000_000 }, // 150 coins
+    enabled: true,
+    version: 1,
+  },
+  'm_daily_kills30': {
+    kind: 'daily',
+    title: 'Destrua 30 inimigos',
+    description: 'Destrua 30 inimigos (acumulado do dia).',
+    metric: 'kills',
+    target: 30,
+    rewardConfig: { type: 'coins', amountUnits: 200_000_000 }, // 200 coins
+    enabled: true,
+    version: 1,
+  },
+  'm_weekly_play20': {
+    kind: 'weekly',
+    title: 'Complete 20 partidas na semana',
+    description: 'Complete 20 partidas nesta semana.',
+    metric: 'plays',
+    target: 20,
+    rewardConfig: { type: 'coins', amountUnits: 500_000_000 }, // 500 coins
+    enabled: true,
+    version: 1,
+  },
+  'm_weekly_buy1': {
+    kind: 'weekly',
+    title: 'Compre 1 máquina na semana',
+    description: 'Adquira 1 máquina na loja esta semana.',
+    metric: 'buys',
+    target: 1,
+    rewardConfig: { type: 'coins', amountUnits: 300_000_000 }, // 300 coins
+    enabled: true,
+    version: 1,
+  },
+};
+
+/**
+ * Catálogo de CONQUISTAS v1 — achievements/{id} (create-if-absent).
+ * category: games | mining | collection | missions. Sem período (sem reset).
+ */
+const ACHIEVEMENTS: Record<string, Record<string, unknown>> = {
+  'a_first_match': {
+    category: 'games',
+    title: 'Primeira Partida',
+    description: 'Jogue sua primeira partida.',
+    metric: 'plays',
+    target: 1,
+    rewardConfig: { type: 'coins', amountUnits: 50_000_000 }, // 50 coins
+    enabled: true,
+    version: 1,
+  },
+  'a_kills_100': {
+    category: 'games',
+    title: '100 Abates',
+    description: 'Destrua 100 inimigos no total.',
+    metric: 'kills',
+    target: 100,
+    rewardConfig: { type: 'coins', amountUnits: 200_000_000 }, // 200 coins
+    enabled: true,
+    version: 1,
+  },
+  'a_score_10k': {
+    category: 'games',
+    title: '10.000 Pontos',
+    description: 'Faça 10.000 pontos em uma única partida.',
+    metric: 'max_score',
+    target: 10_000,
+    rewardConfig: { type: 'coins', amountUnits: 300_000_000 }, // 300 coins
+    enabled: true,
+    version: 1,
+  },
+  'a_power_100': {
+    category: 'mining',
+    title: '100 H/s',
+    description: 'Alcance 100 H/s de poder total.',
+    metric: 'power',
+    target: 100,
+    rewardConfig: { type: 'coins', amountUnits: 100_000_000 }, // 100 coins
+    enabled: true,
+    version: 1,
+  },
+  'a_power_1k': {
+    category: 'mining',
+    title: '1.000 H/s',
+    description: 'Alcance 1.000 H/s de poder total.',
+    metric: 'power',
+    target: 1_000,
+    rewardConfig: { type: 'coins', amountUnits: 400_000_000 }, // 400 coins
+    enabled: true,
+    version: 1,
+  },
+  'a_machines_1': {
+    category: 'collection',
+    title: 'Primeira Máquina',
+    description: 'Possua 1 máquina.',
+    metric: 'machines',
+    target: 1,
+    rewardConfig: { type: 'coins', amountUnits: 100_000_000 }, // 100 coins
+    enabled: true,
+    version: 1,
+  },
+  'a_machines_5': {
+    category: 'collection',
+    title: '5 Máquinas',
+    description: 'Possua 5 máquinas.',
+    metric: 'machines',
+    target: 5,
+    rewardConfig: { type: 'coins', amountUnits: 500_000_000 }, // 500 coins
+    enabled: true,
+    version: 1,
+  },
+  'a_claims_10': {
+    category: 'missions',
+    title: 'Caçador de Recompensas',
+    description: 'Resgate 10 recompensas.',
+    metric: 'claims',
+    target: 10,
+    rewardConfig: { type: 'coins', amountUnits: 250_000_000 }, // 250 coins
+    enabled: true,
+    version: 1,
+  },
+};
+
 const GAMES: Record<string, Record<string, unknown>> = {
   'tap-blitz': {
     name: 'Tap Blitz',
@@ -286,6 +431,12 @@ async function main(): Promise<void> {
     console.log(`[seed] games/${id}: ${await createIfMissing(db, `games/${id}`, data)}`);
   }
   console.log(`[seed] games/nova-swarm (v2): ${await upgradeNovaSwarmToV2(db)}`);
+  for (const [id, data] of Object.entries(MISSIONS)) {
+    console.log(`[seed] missions/${id}: ${await createIfMissing(db, `missions/${id}`, data)}`);
+  }
+  for (const [id, data] of Object.entries(ACHIEVEMENTS)) {
+    console.log(`[seed] achievements/${id}: ${await createIfMissing(db, `achievements/${id}`, data)}`);
+  }
   console.log('[seed] done');
 }
 
