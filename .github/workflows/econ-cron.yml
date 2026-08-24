@@ -1,0 +1,63 @@
+# PlayHash — runner econômico (autoridade econômica admin).
+# Plano Spark: SEM Cloud Functions / Storage / Blaze. Executa via GitHub Actions.
+#
+# IMPORTANTE: para minutos gratuitos ILIMITADOS em repos privados não serem
+# consumidos, este workflow deve viver em um REPOSITÓRIO PÚBLICO separado
+# (sugestão: repo contendo apenas backend/ + .github/workflows/econ-cron.yml).
+#
+# Secret necessário: FIREBASE_SERVICE_ACCOUNT_KEY = conteúdo JSON completo
+# da service account (nunca ecoado no log).
+
+name: econ-cron
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: econ-runner
+  cancel-in-progress: false
+
+jobs:
+  runner:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Write service account key to temp file
+        env:
+          FIREBASE_SERVICE_ACCOUNT_KEY: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "$FIREBASE_SERVICE_ACCOUNT_KEY" ]; then
+            echo "Secret FIREBASE_SERVICE_ACCOUNT_KEY is missing" >&2
+            exit 1
+          fi
+          KEY_FILE="$RUNNER_TEMP/serviceAccount.json"
+          printf '%s' "$FIREBASE_SERVICE_ACCOUNT_KEY" > "$KEY_FILE"
+          chmod 600 "$KEY_FILE"
+          echo "GOOGLE_APPLICATION_CREDENTIALS=$KEY_FILE" >> "$GITHUB_ENV"
+
+      - name: Build
+        working-directory: backend
+        run: npm run build
+
+      - name: Run economic runner
+        working-directory: backend
+        run: node dist/runner.js
+
+      - name: Cleanup key file
+        if: always()
+        run: rm -f "$RUNNER_TEMP/serviceAccount.json"

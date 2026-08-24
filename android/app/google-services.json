@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "98004917725",
+    "project_id": "playhash-70742",
+    "storage_bucket": "playhash-70742.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:98004917725:android:a5744dfdd846c477986a34",
+        "android_client_info": {
+          "package_name": "com.mustarda.playhash"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBvCZihaRu6Zrwf9BdZheadQw1Bsdto1JE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

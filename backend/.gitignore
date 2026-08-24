@@ -1,0 +1,14 @@
+# Dependências e build
+node_modules/
+dist/
+
+# SEGREDOS — NUNCA versionar chaves de service account
+.secrets/
+*.json.key
+serviceAccount*.json
+
+# Diversos
+coverage/
+*.log
+.env
+.env.*

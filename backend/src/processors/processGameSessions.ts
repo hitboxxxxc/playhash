@@ -1,0 +1,239 @@
+/**
+ * Processador de sessões de partida (gameSessions).
+ *
+ * Consulta status='finished' AND processed=false; valida (TUDO no servidor):
+ * dono, duração min/máx, score inteiro 0..maxExpectedScore, score/segundo ≤ cap,
+ * limite diário; normaliza pela configuração do game; concede grant de 24h;
+ * recalcula totalPower; marca processed=true + serverResult. Idempotente.
+ *
+ * A função PURA validateGameSession é testável sem Firestore.
+ */
+import { FieldValue, Firestore } from 'firebase-admin/firestore';
+import { EconomyConfig, GameDoc, ProcessingSummary } from '../core/types';
+import { getEconomyConfig } from '../core/config';
+import { createTempGrant, recalcPower } from '../core/power';
+import { writeAudit, auditEventId } from '../core/audit';
+import { incrementDailyCounter, readDailyCounter } from '../core/ratelimit';
+
+// ---------------------------------------------------------------------------
+// Validação PURA (unit-testável)
+// ---------------------------------------------------------------------------
+
+export interface SessionValidationInput {
+  uid: string | null;
+  startedAtMs: number;
+  finishedAtMs: number;
+  score: unknown;
+  game: GameDoc | null;
+  limits: EconomyConfig['limits'];
+  defaultPowerBaseReward: number;
+  sessionsToday: number;
+}
+
+export type SessionValidationResult =
+  | { ok: true; powerAmount: bigint }
+  | { ok: false; reason: string };
+
+/**
+ * Fórmula do poder (doc 05):
+ *   rawPower = floor(score × powerBaseReward / maxExpectedScore)
+ *   power    = clamp(rawPower, 0, powerCapPerSession)
+ */
+export function validateGameSession(input: SessionValidationInput): SessionValidationResult {
+  const { limits } = input;
+
+  if (!input.uid || input.uid.length === 0) return { ok: false, reason: 'INVALID_OWNER' };
+  if (!input.game) return { ok: false, reason: 'GAME_NOT_FOUND' };
+  if (!input.game.enabled) return { ok: false, reason: 'GAME_DISABLED' };
+  if (!input.game.configuration) return { ok: false, reason: 'GAME_CONFIG_MISSING' };
+
+  const cfg = input.game.configuration;
+  if (
+    typeof input.score !== 'number' ||
+    !Number.isSafeInteger(input.score) ||
+    input.score < 0 ||
+    input.score > cfg.maxExpectedScore
+  ) {
+    return { ok: false, reason: 'SCORE_OUT_OF_RANGE' };
+  }
+
+  const durationMs = input.finishedAtMs - input.startedAtMs;
+  if (!Number.isFinite(durationMs) || durationMs < limits.minSessionDurationMs) {
+    return { ok: false, reason: 'DURATION_TOO_SHORT' };
+  }
+  if (durationMs > limits.maxSessionDurationMs) {
+    return { ok: false, reason: 'DURATION_TOO_LONG' };
+  }
+
+  const durationSec = durationMs / 1000;
+  if (input.score / durationSec > limits.maxScorePerSecond) {
+    return { ok: false, reason: 'SCORE_RATE_EXCEEDED' };
+  }
+
+  if (input.sessionsToday >= limits.maxSessionsPerDay) {
+    return { ok: false, reason: 'DAILY_LIMIT_REACHED' };
+  }
+
+  const powerBaseReward =
+    cfg.powerBaseReward > 0 ? cfg.powerBaseReward : input.defaultPowerBaseReward;
+  const rawPower = Math.floor((input.score * powerBaseReward) / cfg.maxExpectedScore);
+  const power = Math.max(0, Math.min(cfg.powerCapPerSession, rawPower));
+  return { ok: true, powerAmount: BigInt(power) };
+}
+
+// ---------------------------------------------------------------------------
+// Processador (Firestore/admin)
+// ---------------------------------------------------------------------------
+
+async function loadGame(db: Firestore, gameId: unknown): Promise<GameDoc | null> {
+  if (typeof gameId !== 'string' || gameId.length === 0) return null;
+  const snap = await db.doc(`games/${gameId}`).get();
+  if (!snap.exists) return null;
+  const rawCfg = snap.get('configuration') as Record<string, unknown> | undefined;
+  const configuration = rawCfg
+    ? {
+        maxExpectedScore: Number(rawCfg.maxExpectedScore ?? 0),
+        powerBaseReward: Number(rawCfg.powerBaseReward ?? 0),
+        powerCapPerSession: Number(rawCfg.powerCapPerSession ?? 0),
+      }
+    : null;
+  if (configuration && configuration.maxExpectedScore <= 0) return {
+    id: gameId,
+    enabled: snap.get('enabled') === true,
+    configuration: null,
+  };
+  return { id: gameId, enabled: snap.get('enabled') === true, configuration };
+}
+
+async function handleSession(
+  db: Firestore,
+  economy: EconomyConfig,
+  sessionSnap: FirebaseFirestore.QueryDocumentSnapshot,
+  nowMs: number,
+): Promise<'granted' | 'rejected' | 'failed'> {
+  const sessionId = sessionSnap.id;
+  const data = sessionSnap.data();
+  const uid = typeof data.uid === 'string' ? data.uid : null;
+  const ruleVersion = economy.economicRuleVersion;
+
+  try {
+    const game = await loadGame(db, data.gameId);
+    const sessionsToday = uid
+      ? await readDailyCounter(db, uid, 'sessions', nowMs)
+      : 0;
+
+    const result = validateGameSession({
+      uid,
+      startedAtMs: toMillisSafe(data.startedAt),
+      finishedAtMs: toMillisSafe(data.finishedAt),
+      score: data.score,
+      game,
+      limits: economy.limits,
+      defaultPowerBaseReward: economy.powerBasePerHs,
+      sessionsToday,
+    });
+
+    if (!result.ok || uid === null) {
+      const reason = result.ok ? 'INVALID_OWNER' : result.reason;
+      await sessionSnap.ref.update({
+        processed: true,
+        serverResult: { status: 'rejected', reason, at: FieldValue.serverTimestamp() },
+      });
+      await writeAudit(db, {
+        eventId: auditEventId('GAME_SESSION_REJECTED', sessionId),
+        userId: uid,
+        type: 'GAME_SESSION_REJECTED',
+        referenceId: sessionId,
+        origin: 'runner.processGameSessions',
+        ruleVersion,
+        status: 'REJECTED',
+        detail: { reason },
+      });
+      return 'rejected';
+    }
+
+    // Grant 24h — doc id determinístico (= sessionId) ⇒ idempotente.
+    const created = await createTempGrant(db, {
+      grantId: sessionId,
+      uid,
+      powerAmount: result.powerAmount,
+      source: 'game',
+      acquiredAtMs: nowMs,
+      expiresAtMs: nowMs + economy.limits.tempGrantDurationMs,
+      gameId: typeof data.gameId === 'string' ? data.gameId : undefined,
+      gameSessionId: sessionId,
+      economicRuleVersion: ruleVersion,
+      expired: false,
+    });
+
+    const totalPower = await recalcPower(db, uid, nowMs, {
+      ruleVersion,
+      origin: 'runner.processGameSessions',
+    });
+
+    await sessionSnap.ref.update({
+      processed: true,
+      serverResult: {
+        status: created ? 'granted' : 'already_granted',
+        powerAmount: result.powerAmount.toString(),
+        totalPower: totalPower.toString(),
+        expiresAt: new Date(nowMs + economy.limits.tempGrantDurationMs),
+        at: FieldValue.serverTimestamp(),
+      },
+    });
+
+    await writeAudit(db, {
+      eventId: auditEventId('GAME_POWER_GRANTED', sessionId),
+      userId: uid,
+      type: 'GAME_POWER_GRANTED',
+      valueUnits: result.powerAmount,
+      currencyId: 'power',
+      referenceId: sessionId,
+      origin: 'runner.processGameSessions',
+      ruleVersion,
+      status: 'SUCCESS',
+      detail: { gameId: typeof data.gameId === 'string' ? data.gameId : '' },
+    });
+
+    if (created) await incrementDailyCounter(db, uid, 'sessions', nowMs);
+    return 'granted';
+  } catch (err) {
+    // Falha operacional: NÃO marca processed (retry na próxima execução).
+    console.error(
+      `[processGameSessions] session=${sessionId} failed: ${sanitize(err)}`,
+    );
+    return 'failed';
+  }
+}
+
+function toMillisSafe(v: unknown): number {
+  if (v == null) return NaN;
+  if (typeof v === 'number') return v;
+  const t = v as { toMillis?: () => number };
+  return typeof t.toMillis === 'function' ? t.toMillis() : NaN;
+}
+
+function sanitize(err: unknown): string {
+  return String((err as Error)?.message ?? err).slice(0, 300);
+}
+
+/** Ponto de entrada do runner. */
+export async function processGameSessions(db: Firestore): Promise<ProcessingSummary> {
+  const economy = await getEconomyConfig(db);
+  const nowMs = Date.now(); // tempo SOMENTE do servidor
+
+  const snap = await db
+    .collection('gameSessions')
+    .where('status', '==', 'finished')
+    .where('processed', '==', false)
+    .orderBy('finishedAt', 'asc')
+    .limit(economy.limits.maxBatchSize)
+    .get();
+
+  const summary: ProcessingSummary = { scanned: snap.size, granted: 0, rejected: 0, failed: 0 };
+  for (const doc of snap.docs) {
+    const outcome = await handleSession(db, economy, doc, nowMs);
+    summary[outcome] += 1;
+  }
+  return summary;
+}

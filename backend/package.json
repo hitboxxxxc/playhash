@@ -1,0 +1,28 @@
+{
+  "name": "playhash-econ-backend",
+  "version": "1.0.0",
+  "description": "PlayHash — autoridade econômica (runner admin). 100% plano Spark: Auth + Firestore. Sem Cloud Functions/Storage/Blaze.",
+  "private": true,
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=20"
+  },
+  "main": "dist/runner.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "jest --runInBand",
+    "runner": "node dist/runner.js",
+    "seed": "node dist/seed.js",
+    "check": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.6.0"
+  },
+  "devDependencies": {
+    "@types/jest": "^29.5.13",
+    "@types/node": "^20.16.10",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.2.5",
+    "typescript": "^5.6.2"
+  }
+}
