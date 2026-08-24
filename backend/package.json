@@ -13,6 +13,7 @@
     "test": "jest --runInBand",
     "runner": "node dist/runner.js",
     "seed": "node dist/seed.js",
+    "verify": "node dist/verify.js",
     "check": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

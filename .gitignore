@@ -46,3 +46,11 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+
+# Segredos / chaves — NUNCA versionar
+.secrets/
+**/.secrets/
+node_modules/
+android/app/google-services.json
+*.jks
+key.properties
