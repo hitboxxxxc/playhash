@@ -6,26 +6,38 @@ import '../../../core/widgets/neon_panel.dart';
 import '../../../data/models/machine_model.dart';
 import 'machine_slot.dart';
 
-/// SALA DE MÁQUINAS: 2 prateleiras × 5 slots. Máquinas oficiais do
-/// servidor; slots restantes aparecem travados (cadeado). Botões
-/// "EDITAR SALA"/"ORGANIZAR" abrem informativo "em breve".
+/// SALA DE MÁQUINAS REAL: slots = config/economy.machineSlots (fallback 10),
+/// em prateleiras de 5. Slots preenchidos pelas máquinas owned (sprite por
+/// raridade + badge "LV.X" verde); slots vazios = "+"; slots travados
+/// (índice >= machineSlots) = cadeado. Botões "EDITAR SALA"/"ORGANIZAR"
+/// abrem informativo "em breve".
 class MachineRoomGrid extends StatelessWidget {
   const MachineRoomGrid({
     super.key,
     required this.machines,
+    this.machineSlots = 10,
     this.loading = false,
     required this.onEditRoomTap,
     required this.onOrganizeTap,
   });
 
   static const int _slotsPerShelf = 5;
-  static const int _shelfCount = 2;
-  // Total de slots = _slotsPerShelf * _shelfCount (10).
 
   final List<MachineModel> machines;
+  final int machineSlots;
   final bool loading;
   final VoidCallback onEditRoomTap;
   final VoidCallback onOrganizeTap;
+
+  /// Posições RENDERIZADAS: mínimo 2 prateleiras (10); machineSlots maior
+  /// adiciona prateleiras. Índices >= machineSlots são travados (cadeado).
+  int get _totalSlots {
+    final int slots = machineSlots < 0 ? 0 : machineSlots;
+    final int shelves = (slots / _slotsPerShelf).ceil();
+    return (shelves < 2 ? 2 : shelves) * _slotsPerShelf;
+  }
+
+  int get _shelfCount => _totalSlots ~/ _slotsPerShelf;
 
   @override
   Widget build(BuildContext context) {
@@ -45,17 +57,7 @@ class MachineRoomGrid extends StatelessWidget {
               children: <Widget>[
                 for (int slot = 0; slot < _slotsPerShelf; slot++) ...<Widget>[
                   if (slot > 0) const SizedBox(width: 8),
-                  Expanded(
-                    child: MachineSlot(
-                      machine: loading
-                          ? null
-                          : (shelf * _slotsPerShelf + slot < machines.length
-                              ? machines[shelf * _slotsPerShelf + slot]
-                              : null),
-                      slotIndex: shelf * _slotsPerShelf + slot,
-                      loading: loading,
-                    ),
-                  ),
+                  Expanded(child: _buildSlot(shelf, slot)),
                 ],
               ],
             ),
@@ -80,6 +82,22 @@ class MachineRoomGrid extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildSlot(int shelf, int slot) {
+    final int index = shelf * _slotsPerShelf + slot;
+    if (index >= _totalSlots) return const SizedBox.shrink();
+
+    final bool locked = index >= machineSlots;
+    final MachineModel? machine =
+        loading || locked || index >= machines.length ? null : machines[index];
+
+    return MachineSlot(
+      machine: machine,
+      slotIndex: index,
+      locked: locked,
+      loading: loading,
     );
   }
 }

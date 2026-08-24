@@ -38,6 +38,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   WalletModel? _wallet;
   PowerModel? _power;
   List<MachineModel> _machines = const <MachineModel>[];
+  int _machineSlots = 10; // fallback; oficial vem de config/economy
 
   @override
   bool get wantKeepAlive => true;
@@ -75,6 +76,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
             .read(machinesRepositoryProvider)
             .loadMachines(uid)
             .catchError((Object _) => const <MachineModel>[]),
+        ref
+            .read(economyRepositoryProvider)
+            .loadMachineSlots()
+            .catchError((Object _) => null),
       ]);
       if (!mounted) return;
 
@@ -85,6 +90,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
         _wallet = data[1] as WalletModel?;
         _power = data[2] as PowerModel?;
         _machines = data[3] as List<MachineModel>;
+        _machineSlots = (data[4] as int?) ?? 10;
         _status = _HomeStatus.ready;
       });
     } catch (_) {
@@ -196,10 +202,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
           onSettingsTap: () => context.push(RoutePaths.settings),
         ),
         const SizedBox(height: 20),
-        PowerSummaryCard(totalPower: _power?.totalPower),
+        PowerSummaryCard(
+          totalPower: _power?.totalPower,
+          permanentPower: _power?.permanentPower,
+        ),
         const SizedBox(height: 20),
         MachineRoomGrid(
           machines: _machines,
+          machineSlots: _machineSlots,
           onEditRoomTap: () => showComingSoonSheet(
             context,
             feature: 'Editar sala',

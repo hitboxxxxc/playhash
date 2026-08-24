@@ -16,13 +16,24 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: 'run = economic runner | seed = dev seed (somente docs ausentes)'
+        description: 'run = economic runner | seed = dev seed | devTopUp = crédito de dev (ENV=dev)'
         type: choice
         options:
           - run
           - seed
+          - devTopUp
         default: run
         required: true
+      uid:
+        description: 'devTopUp: uid do usuário que receberá o crédito (exigido p/ devTopUp)'
+        type: string
+        required: false
+        default: ''
+      amountCoins:
+        description: 'devTopUp: quantidade em coins (padrão 5000)'
+        type: string
+        required: false
+        default: '5000'
 
 concurrency:
   group: econ-runner
@@ -74,6 +85,19 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && inputs.action == 'seed'
         working-directory: backend
         run: node dist/seed.js
+
+      # devTopUp: crédito de saldo de desenvolvimento. GATE no runner:
+      # só executa de verdade quando a repo variable ENV == "dev"
+      # (gh variable set ENV --body dev). Caso contrário é no-op logado.
+      - name: Dev top-up (ENV=dev only)
+        if: github.event_name == 'workflow_dispatch' && inputs.action == 'devTopUp'
+        working-directory: backend
+        env:
+          RUNNER_ACTION: devTopUp
+          APP_ENV: ${{ vars.ENV }}
+          DEV_TOPUP_UID: ${{ inputs.uid }}
+          DEV_TOPUP_COINS: ${{ inputs.amountCoins }}
+        run: node dist/runner.js
 
       - name: Run economic runner
         if: github.event_name != 'workflow_dispatch' || inputs.action == 'run'

@@ -2,8 +2,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../data/cache_policy.dart';
 import '../data/models/game_model.dart';
+import '../data/repositories/economy_repository.dart';
 import '../data/repositories/game_sessions_repository.dart';
 import '../data/repositories/games_repository.dart';
+import '../data/repositories/machine_catalog_repository.dart';
 import '../data/repositories/machines_repository.dart';
 import '../data/repositories/mining_repository.dart';
 import '../data/repositories/power_repository.dart';
@@ -12,6 +14,7 @@ import '../data/repositories/wallet_repository.dart';
 import 'services/auth_service.dart';
 import 'services/cloud_functions_service.dart';
 import 'services/game_session_service.dart';
+import 'services/purchase_intent_service.dart';
 
 /// Provider único do serviço de autenticação (Riverpod é o state management
 /// exclusivo do projeto). Em testes, as telas aceitam override deste provider
@@ -94,6 +97,22 @@ final Provider<GamesRepositoryApi> gamesRepositoryProvider =
     Provider<GamesRepositoryApi>(
   (Ref ref) => GamesRepository(ref.watch(cachePolicyProvider)),
 );
+
+/// Repositório do catálogo de máquinas (`config/machines`), cache-first.
+final Provider<MachineCatalogRepositoryApi> machineCatalogRepositoryProvider =
+    Provider<MachineCatalogRepositoryApi>(
+  (Ref ref) => MachineCatalogRepository(ref.watch(cachePolicyProvider)),
+);
+
+/// Repositório de config econômica pública (`config/economy`), cache-first.
+final Provider<EconomyRepositoryApi> economyRepositoryProvider =
+    Provider<EconomyRepositoryApi>(
+  (Ref ref) => EconomyRepository(ref.watch(cachePolicyProvider)),
+);
+
+/// Serviço de intenções de compra da LOJA (idempotente por clientRequestId).
+final Provider<PurchaseIntentService> purchaseIntentServiceProvider =
+    Provider<PurchaseIntentService>((Ref ref) => PurchaseIntentService());
 
 /// Catálogo de games habilitados (cache-first; vazio em caso de falha).
 final FutureProvider<List<GameModel>> gamesCatalogProvider =

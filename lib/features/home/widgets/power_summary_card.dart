@@ -7,13 +7,21 @@ import '../../../core/widgets/neon_panel.dart';
 import '../../../core/widgets/skeleton_box.dart';
 import 'power_bolt_badge.dart';
 
-/// Card "MEU PODER" da HOME: total oficial ou "—", multiplicador
-/// placeholder (recurso ainda não fornecido pelo backend) e próxima
-/// recompensa "—" (schedule de blocos ainda inexistente).
+/// Card "MEU PODER" da HOME: total oficial, poder PERMANENTE real
+/// (power/{uid}) ou "—", multiplicador placeholder (recurso ainda não
+/// fornecido pelo backend) e próxima recompensa "—" (schedule inexistente).
 class PowerSummaryCard extends StatelessWidget {
-  const PowerSummaryCard({super.key, this.totalPower, this.loading = false});
+  const PowerSummaryCard({
+    super.key,
+    this.totalPower,
+    this.permanentPower,
+    this.loading = false,
+  });
 
   final int? totalPower;
+
+  /// Poder permanente oficial (soma das máquinas owned — backend).
+  final int? permanentPower;
   final bool loading;
 
   @override
@@ -64,6 +72,20 @@ class PowerSummaryCard extends StatelessWidget {
                         ),
                       ),
                     const SizedBox(height: 4),
+                    if (permanentPower != null) ...<Widget>[
+                      Semantics(
+                        label: 'Poder permanente',
+                        value: PowerFormat.format(permanentPower!),
+                        child: Text(
+                          'Permanente: ${PowerFormat.format(permanentPower!)}',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                    ],
                     const Text(
                       'Multiplicador: —',
                       style: TextStyle(

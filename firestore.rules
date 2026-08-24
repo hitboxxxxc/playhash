@@ -238,8 +238,15 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // config/economy: LEITURA autenticada (cliente exibe machineSlots da
+    // sala); escrita SOMENTE backend. Nenhum campo é decisão do cliente.
+    match /config/economy {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+
     match /config/{docId} {
-      allow read, write: if false; // inclui config/economy
+      allow read, write: if false;
     }
 
     // ---- Auditoria: acesso somente via backend ---------------------------

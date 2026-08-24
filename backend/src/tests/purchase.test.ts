@@ -28,6 +28,28 @@ describe('validatePurchase', () => {
     expect(validatePurchase(100n, 0n)).toEqual({ ok: false, failureCode: 'INVALID_PRICE' });
     expect(validatePurchase(100n, -5n)).toEqual({ ok: false, failureCode: 'INVALID_PRICE' });
   });
+
+  it('maxPerUser atingido (catálogo v2)', () => {
+    const saldo = 1_000_000_000n; // 1.000 coins
+    // 5 owned de RIG SCRAP (max 5) => bloqueia mesmo com saldo alto.
+    expect(validatePurchase(saldo, 400_000_000n, 5, 5)).toEqual({
+      ok: false,
+      failureCode: 'MAX_PER_USER_REACHED',
+    });
+    // 4 owned < max 5 => ok.
+    expect(validatePurchase(saldo, 400_000_000n, 4, 5)).toEqual({ ok: true });
+    // maxPerUser = 0 (legado) => sem limite.
+    expect(validatePurchase(saldo, 400_000_000n, 99, 0)).toEqual({ ok: true });
+  });
+
+  it('maxPerUser tem precedência sobre saldo, saldo sobre preço', () => {
+    // Limite E saldo insuficiente => limite primeiro (mensagem mais útil).
+    const limited = validatePurchase(1n, 10n, 5, 5);
+    expect(limited).toEqual({ ok: false, failureCode: 'MAX_PER_USER_REACHED' });
+    // Saldo insuficiente sem limite.
+    const poor = validatePurchase(1n, 10n, 0, 5);
+    expect(poor).toEqual({ ok: false, failureCode: 'INSUFFICIENT_BALANCE' });
+  });
 });
 
 describe('idempotência de compra (clientRequestId)', () => {

@@ -1,11 +1,13 @@
 /**
  * Processador de intenções de compra (purchaseIntents).
  *
- * Para cada intent pendente: transação admin que lê o preço em
- * config/catalog/machines/{machineId}, valida saldo em wallets/{uid}, debita
- * availableBalance, cria machines/{uid}/items/{itemId}, soma permanentPower,
- * marca intent done/failed. Idempotência por clientRequestId.
- * Auditoria MACHINE_PURCHASED / PURCHASE_FAILED.
+ * Para cada intent pendente: transação admin que lê preço/poder/limites
+ * SOMENTE da config (config/machines/{machineId} — catálogo v2), valida saldo
+ * em wallets/{uid}, maxPerUser e enabled, debita availableBalance, cria
+ * machines/{uid}/items/{itemId}, soma permanentPower, marca intent
+ * done/failed. Idempotência por clientRequestId.
+ * Auditoria MACHINE_PURCHASED / PURCHASE_FAILED + espelho de histórico em
+ * rewards/{uid}/items (mesmo padrão do espelho de blocos).
  *
  * validatePurchase é PURA e unit-testável sem Firestore.
  */
@@ -24,8 +26,16 @@ import { incrementDailyCounter, readDailyCounter } from '../core/ratelimit';
 
 export type PurchaseValidation = { ok: true } | { ok: false; failureCode: string };
 
-export function validatePurchase(balanceUnits: bigint, priceUnits: bigint): PurchaseValidation {
+export function validatePurchase(
+  balanceUnits: bigint,
+  priceUnits: bigint,
+  ownedCount = 0,
+  maxPerUser = 0,
+): PurchaseValidation {
   if (priceUnits <= 0n) return { ok: false, failureCode: 'INVALID_PRICE' };
+  if (maxPerUser > 0 && ownedCount >= maxPerUser) {
+    return { ok: false, failureCode: 'MAX_PER_USER_REACHED' };
+  }
   if (balanceUnits < priceUnits) return { ok: false, failureCode: 'INSUFFICIENT_BALANCE' };
   return { ok: true };
 }
@@ -45,8 +55,11 @@ function parseMachine(id: string, snap: FirebaseFirestore.DocumentSnapshot): Mac
   if (!snap.exists) return null;
   if (snap.get('enabled') !== true) return null;
   const price = toInt((snap.get('priceUnits') ?? -1) as number | string);
-  const power = toInt((snap.get('powerAmount') ?? -1) as number | string);
+  // v2 usa powerUnits (H/s); legado usava powerAmount.
+  const powerRaw = snap.get('powerUnits') ?? snap.get('powerAmount') ?? -1;
+  const power = toInt(powerRaw as number | string);
   if (price <= 0n || power <= 0n) return null;
+  const maxPerUserRaw = snap.get('maxPerUser');
   return {
     id,
     name: String(snap.get('name') ?? id),
@@ -54,6 +67,11 @@ function parseMachine(id: string, snap: FirebaseFirestore.DocumentSnapshot): Mac
     powerAmount: power,
     currencyId: String(snap.get('currencyId') ?? 'coins'),
     enabled: true,
+    rarity: String(snap.get('rarity') ?? '').toLowerCase(),
+    maxPerUser:
+      typeof maxPerUserRaw === 'number' && Number.isSafeInteger(maxPerUserRaw) && maxPerUserRaw > 0
+        ? maxPerUserRaw
+        : 0,
   };
 }
 
@@ -118,7 +136,8 @@ async function handleIntent(
       return await failIntent(db, intent, 'DAILY_LIMIT_REACHED', ruleVersion);
     }
 
-    const machineSnap = await db.doc(`config/catalog/machines/${intent.machineId}`).get();
+    // Preço/poder/limites lidos SOMENTE da config (nunca do cliente).
+    const machineSnap = await db.doc(`config/machines/${intent.machineId}`).get();
     const machine = parseMachine(intent.machineId, machineSnap);
     if (!machine) {
       return await failIntent(db, intent, 'INVALID_MACHINE', ruleVersion);
@@ -143,10 +162,26 @@ async function handleIntent(
       const check = validatePurchase(balance, machine.priceUnits);
       if (!check.ok) return { kind: 'fail', code: check.failureCode };
 
+      // maxPerUser: contagem de itens do MESMO machineId já owned (dentro da
+      // transação — sem janela de corrida).
+      if (machine.maxPerUser > 0) {
+        const ownedSnap = await tx.get(
+          db
+            .collection(`machines/${intent.uid}/items`)
+            .where('machineId', '==', machine.id)
+            .limit(machine.maxPerUser + 1),
+        );
+        const check = validatePurchase(1n, 1n, ownedSnap.size, machine.maxPerUser);
+        if (!check.ok) return { kind: 'fail', code: check.failureCode };
+      }
+
       const itemRef = db.collection(`machines/${intent.uid}/items`).doc();
       tx.create(itemRef, {
         machineId: machine.id,
         name: machine.name,
+        rarity: machine.rarity,
+        level: 1,
+        active: true,
         powerAmount: machine.powerAmount.toString(),
         currencyId: machine.currencyId,
         pricePaidUnits: machine.priceUnits.toString(),
@@ -207,6 +242,17 @@ async function handleIntent(
       status: 'SUCCESS',
       detail: { machineId: machine.id, machineItemId: outcome.itemId },
     });
+    // Espelho de histórico (rewards/{uid}/items) — mesmo padrão do espelho
+    // de blocos: id determinístico ⇒ reexecução não duplica a entrada.
+    await db
+      .doc(`rewards/${intent.uid}/items/MACHINE_PURCHASE_${intentId}`)
+      .create({
+        type: 'MACHINE_PURCHASE',
+        amount: (-machine.priceUnits).toString(),
+        currencyId: machine.currencyId,
+        createdAt: FieldValue.serverTimestamp(),
+        referenceId: intentId,
+      });
     await incrementDailyCounter(db, intent.uid, 'intents', nowMs);
     return 'granted';
   } catch (err) {

@@ -48,16 +48,24 @@ class MachineModel {
     return null;
   }
 
-  factory MachineModel.fromMap(String id, Map<String, dynamic> map) =>
-      MachineModel(
-        id: id,
-        type: (map['type'] as String?)?.trim() ?? '',
-        level: _toInt(map['level']),
-        power: _toInt(map['power']),
-        purchasedAt: _toDate(map['purchasedAt']),
-        active: map['active'] is bool ? map['active'] as bool : true,
-        metadata: map['metadata'] is Map<String, dynamic>
-            ? map['metadata'] as Map<String, dynamic>
-            : const <String, dynamic>{},
-      );
+  /// Campos do backend (runner): machineId, name, rarity, level, active,
+  /// powerAmount (H/s), acquiredAt. Campos legados (type/power/purchasedAt)
+  /// continuam aceitos para compatibilidade.
+  factory MachineModel.fromMap(String id, Map<String, dynamic> map) {
+    final Map<String, dynamic> metadata = map['metadata'] is Map<String, dynamic>
+        ? Map<String, dynamic>.from(map['metadata'] as Map<String, dynamic>)
+        : <String, dynamic>{};
+    final Object? rarity = map['rarity'];
+    if (rarity is String && rarity.isNotEmpty) metadata['rarity'] = rarity;
+    return MachineModel(
+      id: id,
+      type: ((map['machineId'] as String?) ?? (map['type'] as String?) ?? '')
+          .trim(),
+      level: map['level'] != null ? _toInt(map['level']) : 1,
+      power: _toInt(map['powerAmount'] ?? map['power']),
+      purchasedAt: _toDate(map['acquiredAt'] ?? map['purchasedAt']),
+      active: map['active'] is bool ? map['active'] as bool : true,
+      metadata: metadata,
+    );
+  }
 }

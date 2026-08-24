@@ -82,9 +82,14 @@ export interface MachineDoc {
   id: string;
   name: string;
   priceUnits: bigint;
+  /** Poder da máquina em H/s (unidade-base inteira). */
   powerAmount: bigint;
   currencyId: string;
   enabled: boolean;
+  /** Raridade v2 (common|rare|epic|legendary). '' = legado sem raridade. */
+  rarity: string;
+  /** Limite de unidades por usuário (0 = sem limite configurado). */
+  maxPerUser: number;
 }
 
 /** Documento tempGrants/{grantId} (poder temporário de 24h). */
@@ -133,7 +138,8 @@ export type AuditEventType =
   | 'PURCHASE_FAILED'
   | 'BLOCK_CREATED'
   | 'BLOCK_FINALIZED'
-  | 'REWARD_CREDITED';
+  | 'REWARD_CREDITED'
+  | 'DEV_TOPUP';
 
 export interface ProcessingSummary {
   scanned: number;

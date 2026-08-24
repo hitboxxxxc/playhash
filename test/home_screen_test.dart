@@ -7,6 +7,7 @@ import 'package:playhash/core/services/auth_service.dart';
 import 'package:playhash/data/models/machine_model.dart';
 import 'package:playhash/data/models/power_model.dart';
 import 'package:playhash/data/models/wallet_model.dart';
+import 'package:playhash/data/repositories/economy_repository.dart';
 import 'package:playhash/data/repositories/machines_repository.dart';
 import 'package:playhash/data/repositories/power_repository.dart';
 import 'package:playhash/data/repositories/profile_repository.dart';
@@ -94,6 +95,15 @@ class _FakeMachinesRepository implements MachinesRepositoryApi {
       Stream<List<MachineModel>>.value(machines);
 }
 
+class _FakeEconomyRepository implements EconomyRepositoryApi {
+  _FakeEconomyRepository(this.machineSlots);
+
+  int? machineSlots;
+
+  @override
+  Future<int?> loadMachineSlots() async => machineSlots;
+}
+
 Future<void> _pumpHome(
   WidgetTester tester, {
   required _FakeAuthService auth,
@@ -101,6 +111,7 @@ Future<void> _pumpHome(
   required _FakeWalletRepository walletRepo,
   required _FakePowerRepository powerRepo,
   required _FakeMachinesRepository machinesRepo,
+  _FakeEconomyRepository? economyRepo,
 }) async {
   await tester.binding.setSurfaceSize(const Size(800, 2400));
   addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -113,6 +124,8 @@ Future<void> _pumpHome(
         walletRepositoryProvider.overrideWithValue(walletRepo),
         powerRepositoryProvider.overrideWithValue(powerRepo),
         machinesRepositoryProvider.overrideWithValue(machinesRepo),
+        economyRepositoryProvider
+            .overrideWithValue(economyRepo ?? _FakeEconomyRepository(10)),
       ],
       child: const MaterialApp(home: HomeScreen()),
     ),
@@ -123,6 +136,11 @@ Future<void> _pumpHome(
 final Finder _lockedSlots = find.byWidgetPredicate(
   (Widget w) =>
       w is Semantics && (w.properties.label?.contains('travado') ?? false),
+);
+
+final Finder _emptySlots = find.byWidgetPredicate(
+  (Widget w) =>
+      w is Semantics && (w.properties.label?.contains('vazio') ?? false),
 );
 
 void main() {
@@ -149,8 +167,10 @@ void main() {
     expect(find.text('Multiplicador: —'), findsOneWidget);
     expect(find.textContaining('Próxima recompensa em'), findsOneWidget);
 
-    // Sala de máquinas: 2 prateleiras × 5 slots, todos travados.
-    expect(_lockedSlots, findsNWidgets(10));
+    // Sala de máquinas: 2 prateleiras × 5 slots, todos VAZIOS ("+")
+    // (machineSlots = 10; nada travado).
+    expect(_emptySlots, findsNWidgets(10));
+    expect(_lockedSlots, findsNothing);
     expect(find.text('EDITAR SALA'), findsOneWidget);
     expect(find.text('ORGANIZAR'), findsOneWidget);
 
@@ -201,8 +221,9 @@ void main() {
     expect(find.text('897,46 PH/s'), findsOneWidget);
     expect(find.text('LV.12'), findsOneWidget);
 
-    // 1 máquina => 9 slots travados.
-    expect(_lockedSlots, findsNWidgets(9));
+    // 1 máquina => 9 slots vazios, nenhum travado.
+    expect(_emptySlots, findsNWidgets(9));
+    expect(_lockedSlots, findsNothing);
   });
 
   testWidgets('HOME: botão "+" abre bottom sheet informativo "EM BREVE"',
@@ -216,7 +237,8 @@ void main() {
       machinesRepo: _FakeMachinesRepository(const <MachineModel>[]),
     );
 
-    await tester.tap(find.byIcon(Icons.add));
+    // O "+" do header (slots vazios da sala também usam "+").
+    await tester.tap(find.byTooltip('Adicionar saldo (em breve)'));
     await tester.pumpAndSettle();
 
     expect(find.text('EM BREVE'), findsOneWidget);

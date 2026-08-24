@@ -16,6 +16,14 @@ abstract final class Collections {
   static const String seasons = 'seasons';
   static const String seasonProgress = 'seasonProgress';
 
+  // Intenções de compra (cliente SÓ cria; validação 100% no runner).
+  static const String purchaseIntents = 'purchaseIntents';
+
+  // Configs públicas: catálogo de máquinas (config/machines) e economia
+  // (config/economy — somente leitura de campos públicos como machineSlots).
+  static const String config = 'config';
+  static const String configMachines = 'config/machines';
+
   // Configs públicas de bloco e histórico de recompensas — backend AINDA
   // ausente (P4): leitura tolerante a doc ausente/permissão negada; as
   // rules correspondentes serão adicionadas quando o backend existir.
