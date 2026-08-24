@@ -2,7 +2,7 @@
  * Processador de intenções de compra (purchaseIntents).
  *
  * Para cada intent pendente: transação admin que lê o preço em
- * config/machines/{machineId}, valida saldo em wallets/{uid}, debita
+ * config/catalog/machines/{machineId}, valida saldo em wallets/{uid}, debita
  * availableBalance, cria machines/{uid}/items/{itemId}, soma permanentPower,
  * marca intent done/failed. Idempotência por clientRequestId.
  * Auditoria MACHINE_PURCHASED / PURCHASE_FAILED.
@@ -118,7 +118,7 @@ async function handleIntent(
       return await failIntent(db, intent, 'DAILY_LIMIT_REACHED', ruleVersion);
     }
 
-    const machineSnap = await db.doc(`config/machines/${intent.machineId}`).get();
+    const machineSnap = await db.doc(`config/catalog/machines/${intent.machineId}`).get();
     const machine = parseMachine(intent.machineId, machineSnap);
     if (!machine) {
       return await failIntent(db, intent, 'INVALID_MACHINE', ruleVersion);

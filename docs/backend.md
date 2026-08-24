@@ -11,7 +11,7 @@
 │ App Flutter  │ ─────────────────────────────▶ │ Firestore (Spark)       │
 │ (cliente)    │  gameSessions / purchaseIntents│                         │
 └──────────────┘                                │  config/economy         │
-                                                │  config/machines/*      │
+                                                │  config/catalog/machines/* │
 ┌──────────────────────────────────┐            │  games/*                │
 │ GitHub Actions (cron */5 +       │  Admin SDK │  power / tempGrants     │
 │ workflow_dispatch) — repo PÚBLICO│ ─────────▶ │  wallets / transactions │

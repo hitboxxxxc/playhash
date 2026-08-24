@@ -1,7 +1,10 @@
 /**
- * Seed DEV — cria config/economy, config/machines/* e games/*
+ * Seed DEV — cria config/economy, config/catalog/machines/* e games/*
  * SOMENTE se não existirem. Nunca sobrescreve dados existentes.
  * Bloqueado em produção (NODE_ENV=production).
+ *
+ * NOTA: caminhos de DOCUMENTO no Firestore precisam de nº PAR de segmentos;
+ * por isso o catálogo vive em config/catalog/machines/{id} (4 segmentos).
  */
 import { initAdmin } from './admin';
 
@@ -90,7 +93,7 @@ async function main(): Promise<void> {
 
   console.log(`[seed] config/economy: ${await createIfMissing(db, 'config/economy', ECONOMY)}`);
   for (const [id, data] of Object.entries(MACHINES)) {
-    console.log(`[seed] config/machines/${id}: ${await createIfMissing(db, `config/machines/${id}`, data)}`);
+    console.log(`[seed] config/catalog/machines/${id}: ${await createIfMissing(db, `config/catalog/machines/${id}`, data)}`);
   }
   for (const [id, data] of Object.entries(GAMES)) {
     console.log(`[seed] games/${id}: ${await createIfMissing(db, `games/${id}`, data)}`);

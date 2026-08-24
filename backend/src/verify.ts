@@ -22,8 +22,8 @@ async function main(): Promise<void> {
   const econSnap = await db.doc('config/economy').get();
   console.log(`[verify] config/economy: ${econSnap.exists ? 'EXISTE' : 'AUSENTE'}`);
 
-  const machines = await countCollection(db, 'config/machines');
-  console.log(`[verify] config/machines: ${machines} documento(s)`);
+  const machines = await countCollection(db, 'config/catalog/machines');
+  console.log(`[verify] config/catalog/machines: ${machines} documento(s)`);
 
   const games = await countCollection(db, 'games');
   console.log(`[verify] games: ${games} documento(s)`);
