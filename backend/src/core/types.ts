@@ -43,11 +43,33 @@ export interface EconomyConfig {
   limits: EconomyLimits;
 }
 
-/** configuration dentro de games/{gameId}. */
+/**
+ * configuration dentro de games/{gameId}.
+ *
+ * Campos legados (tap-blitz/reflex-rush): powerBaseReward + powerCapPerSession
+ * (fórmula proporcional simples).
+ * Campos estendidos (nova-swarm em diante): duração nominal, limites de score
+ * por game e fórmula `linear_cap`:
+ *   power = floor(min(score / maxExpectedScore, 1) × powerCapPerSessionBaseUnits)
+ * Todos os campos estendidos são OPCIONAIS (0/'' = ausente) para manter
+ * compatibilidade com docs antigos já semeados.
+ */
 export interface GameConfiguration {
   maxExpectedScore: number;
   powerBaseReward: number;
   powerCapPerSession: number;
+  /** Duração nominal da partida em segundos (0 = sem duração nominal). */
+  durationSeconds: number;
+  /** Score máximo ABSOLUTO aceito (0 = usa maxExpectedScore). */
+  maxScore: number;
+  /** Cap de score/segundo específico do game (0 = usa limite da economia). */
+  maxScorePerSecond: number;
+  /** Duração mínima específica do game em segundos (0 = usa limite da economia). */
+  minDurationSeconds: number;
+  /** Cap de poder por sessão em UNITS (não em H). */
+  powerCapPerSessionBaseUnits: number;
+  /** 'linear_cap' | '' (legado). */
+  powerFormula: string;
 }
 
 export interface GameDoc {

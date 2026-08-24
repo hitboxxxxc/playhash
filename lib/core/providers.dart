@@ -1,6 +1,9 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../data/cache_policy.dart';
+import '../data/models/game_model.dart';
+import '../data/repositories/game_sessions_repository.dart';
+import '../data/repositories/games_repository.dart';
 import '../data/repositories/machines_repository.dart';
 import '../data/repositories/mining_repository.dart';
 import '../data/repositories/power_repository.dart';
@@ -8,6 +11,7 @@ import '../data/repositories/profile_repository.dart';
 import '../data/repositories/wallet_repository.dart';
 import 'services/auth_service.dart';
 import 'services/cloud_functions_service.dart';
+import 'services/game_session_service.dart';
 
 /// Provider único do serviço de autenticação (Riverpod é o state management
 /// exclusivo do projeto). Em testes, as telas aceitam override deste provider
@@ -82,5 +86,48 @@ final FutureProvider<String?> currentUidProvider =
     return user?.uid as String?;
   } catch (_) {
     return null;
+  }
+});
+
+/// Repositório do catálogo de jogos (`games/*`), cache-first.
+final Provider<GamesRepositoryApi> gamesRepositoryProvider =
+    Provider<GamesRepositoryApi>(
+  (Ref ref) => GamesRepository(ref.watch(cachePolicyProvider)),
+);
+
+/// Catálogo de games habilitados (cache-first; vazio em caso de falha).
+final FutureProvider<List<GameModel>> gamesCatalogProvider =
+    FutureProvider<List<GameModel>>((Ref ref) async {
+  try {
+    return await ref.watch(gamesRepositoryProvider).loadGames();
+  } catch (_) {
+    return const <GameModel>[]; // estado vazio, nunca crash
+  }
+});
+
+/// Repositório de sessões de partida (intenções open/finished).
+final Provider<GameSessionsRepositoryApi> gameSessionsRepositoryProvider =
+    Provider<GameSessionsRepositoryApi>(
+  (Ref ref) => GameSessionsRepository(),
+);
+
+/// Serviço de sessão de partida (abrir/fechar/observar processamento).
+final Provider<GameSessionService> gameSessionServiceProvider =
+    Provider<GameSessionService>((Ref ref) => GameSessionService(
+          repository: ref.watch(gameSessionsRepositoryProvider),
+        ));
+
+/// Maior score finished próprio no game — "Melhor:" do catálogo.
+// ignore: provider_type_args
+final bestScoreProvider =
+    FutureProvider.family<int, String>((Ref ref, String gameId) async {
+  try {
+    final String? uid = await ref.watch(currentUidProvider.future);
+    if (uid == null) return 0;
+    return await ref
+        .watch(gameSessionsRepositoryProvider)
+        .bestScore(uid: uid, gameId: gameId);
+  } catch (_) {
+    return 0; // sem dado confiável ⇒ 0, nunca valor inventado
   }
 });

@@ -1,0 +1,193 @@
+import 'dart:math' as math;
+
+import 'package:flutter/material.dart';
+
+import '../../../../core/theme/app_colors.dart';
+import '../../../../core/theme/chamfered_border.dart';
+import '../engine/renderer.dart';
+
+/// HUD do topo: SCORE (esq., ciano) · TIMER (centro, dourado; <10s vermelho
+/// com pulso) · vidas (3 mini-naves) + WAVE n (roxo). Sobre faixa translúcida
+/// chanfrada. Textos escaláveis + feedback não só por cor.
+class NovaSwarmHud extends StatelessWidget {
+  const NovaSwarmHud({
+    super.key,
+    required this.score,
+    required this.timeLeft,
+    required this.lives,
+    required this.maxLives,
+    required this.wave,
+    this.onPause,
+  });
+
+  final int score;
+  final int timeLeft;
+  final int lives;
+  final int maxLives;
+  final int wave;
+  final VoidCallback? onPause;
+
+  @override
+  Widget build(BuildContext context) {
+    final bool urgent = timeLeft < 10;
+    // Pulso do timer (<10s): escala oscila 0.92–1.0 a ~11Hz.
+    final double pulse = urgent
+        ? 0.92 + 0.08 * math.sin(DateTime.now().microsecondsSinceEpoch / 90000 * math.pi)
+        : 1.0;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      child: DecoratedBox(
+        decoration: ShapeDecoration(
+          color: const Color(0xFF0B0E1A).withValues(alpha: 0.7),
+          shape: ChamferedBorder(
+            cut: 10,
+            side: BorderSide(color: AppColors.cyan.withValues(alpha: 0.25)),
+          ),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          child: Row(
+            children: <Widget>[
+              // SCORE
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Text(
+                      'SCORE',
+                      style: TextStyle(
+                        fontSize: 9,
+                        letterSpacing: 2,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                    Text(
+                      '$score',
+                      style: const TextStyle(
+                        fontSize: 18,
+                        letterSpacing: 2,
+                        fontWeight: FontWeight.w800,
+                        color: AppColors.cyan,
+                        fontFeatures: <FontFeature>[FontFeature.tabularFigures()],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              // TIMER
+              Column(
+                children: <Widget>[
+                  Text(
+                    'TEMPO',
+                    style: TextStyle(
+                      fontSize: 9,
+                      letterSpacing: 2,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+                  Transform.scale(
+                    scale: pulse,
+                    child: Text(
+                      '$timeLeft',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.w800,
+                        color: urgent ? AppColors.error : AppColors.gold,
+                        fontFeatures: const <FontFeature>[
+                          FontFeature.tabularFigures(),
+                        ],
+                      ),
+                    ),
+                  ),
+                  if (urgent)
+                    const Icon(Icons.priority_high, size: 12, color: AppColors.error)
+                  else
+                    const SizedBox(height: 12),
+                ],
+              ),
+              // VIDAS + WAVE
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: <Widget>[
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: <Widget>[
+                        for (int i = 0; i < maxLives; i++)
+                          Padding(
+                            padding: const EdgeInsets.only(left: 4),
+                            child: Opacity(
+                              opacity: i < lives ? 1.0 : 0.25,
+                              child: _MiniShip(active: i < lives),
+                            ),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'WAVE $wave',
+                      style: const TextStyle(
+                        fontSize: 11,
+                        letterSpacing: 2,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.purple,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              // PAUSE (>=48dp de área de toque)
+              SizedBox(
+                width: 48,
+                height: 48,
+                child: IconButton(
+                  onPressed: onPause,
+                  icon: const Icon(Icons.pause_rounded, size: 22),
+                  color: AppColors.textSecondary,
+                  tooltip: 'Pausar',
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Ícone de vida: mini nave desenhada em código (mesmo path do jogo).
+class _MiniShip extends StatelessWidget {
+  const _MiniShip({required this.active});
+
+  final bool active;
+
+  @override
+  Widget build(BuildContext context) => CustomPaint(
+        size: const Size(14, 12),
+        painter: _MiniShipPainter(active: active),
+      );
+}
+
+class _MiniShipPainter extends CustomPainter {
+  _MiniShipPainter({required this.active});
+
+  final bool active;
+
+  final Paint _p = Paint();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.save();
+    canvas.scale(size.width / 52, size.height / 44);
+    _p.color = active ? AppColors.cyan : AppColors.textSecondary;
+    canvas.drawPath(NovaSwarmSprites.playerShip(), _p);
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(covariant _MiniShipPainter oldDelegate) =>
+      oldDelegate.active != active;
+}

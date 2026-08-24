@@ -70,6 +70,33 @@ const GAMES: Record<string, Record<string, unknown>> = {
       powerCapPerSession: 400,
     },
   },
+  // NOVA SWARM — shooter espacial 2D (FÁCIL, 60s, 3 vidas, ondas crescentes).
+  // Fórmula de poder: linear_cap
+  //   power = floor(min(score / maxExpectedScore, 1) × powerCapPerSessionBaseUnits)
+  // powerCapPerSessionBaseUnits = 100_000 units = 100 H/s (powerBasePerHs = 1_000).
+  // Fácil = mais pontos (pointsPerKill 150); médios/duros futuros usarão menos.
+  'nova-swarm': {
+    name: 'NOVA SWARM',
+    difficulty: 'easy',
+    enabled: true,
+    version: 1,
+    configuration: {
+      durationSeconds: 60,
+      baseEnemies: 8,
+      enemiesPerWaveStep: 4,
+      enemyHp: 2,
+      lives: 3,
+      pointsPerKill: 150,
+      pointsPerHit: 25,
+      waveBonus: 500,
+      maxScore: 30_000,
+      maxScorePerSecond: 500,
+      minDurationSeconds: 5,
+      maxExpectedScore: 12_000,
+      powerCapPerSessionBaseUnits: 100_000,
+      powerFormula: 'linear_cap',
+    },
+  },
 };
 
 async function createIfMissing(

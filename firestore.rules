@@ -30,6 +30,13 @@ service cloud.firestore {
       return '' + request.time.year() + '-' + request.time.month() + '-' + request.time.day();
     }
 
+    // Teto de score do game: usa configuration.maxScore quando o game o define
+    // (ex.: nova-swarm 30_000), senão o maxExpectedScore (games legados).
+    function gameMaxScore(gameId) {
+      let cfg = get(/databases/$(database)/documents/games/$(gameId)).data.configuration;
+      return 'maxScore' in cfg ? cfg.maxScore : cfg.maxExpectedScore;
+    }
+
     // Cota diária de intenções (contador mantido PELO BACKEND em rateLimits/{uid}).
     // Doc ausente => primeira intenção do dia é permitida; o backend passa a
     // incrementar a partir daí. Janela de corrida aceitável (documentada).
@@ -147,9 +154,7 @@ service cloud.firestore {
              ['status', 'score', 'finishedAt'])
         && request.resource.data.score is int
         && request.resource.data.score >= 0
-        && request.resource.data.score <=
-             get(/databases/$(database)/documents/games/$(resource.data.gameId))
-               .data.configuration.maxExpectedScore
+        && request.resource.data.score <= gameMaxScore(resource.data.gameId)
         && withinTolerance(request.resource.data.finishedAt);
 
       allow delete: if false;

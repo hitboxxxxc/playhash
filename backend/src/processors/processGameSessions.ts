@@ -34,10 +34,25 @@ export type SessionValidationResult =
   | { ok: true; powerAmount: bigint }
   | { ok: false; reason: string };
 
+/** Tolerância de relógio aplicada à duração nominal do game (±3s). */
+export const GAME_DURATION_TOLERANCE_S = 3;
+
 /**
- * Fórmula do poder (doc 05):
- *   rawPower = floor(score × powerBaseReward / maxExpectedScore)
- *   power    = clamp(rawPower, 0, powerCapPerSession)
+ * Valida a sessão contra a config do game (TUDO no servidor).
+ *
+ * Duração:
+ *  - mínima: cfg.minDurationSeconds (se definido) senão limits.minSessionDurationMs;
+ *  - máxima: cfg.durationSeconds + 3s (se definido) senão limits.maxSessionDurationMs.
+ *    Morte antes do timer zerar é vitória legítima ⇒ só o piso baixo se aplica.
+ * Score: teto = cfg.maxScore (se definido) senão cfg.maxExpectedScore.
+ * Taxa: cfg.maxScorePerSecond (se definido) senão limits.maxScorePerSecond.
+ *
+ * Fórmula do poder:
+ *  - linear_cap (nova-swarm em diante):
+ *      power = floor(min(score / maxExpectedScore, 1) × powerCapPerSessionBaseUnits)
+ *  - legado (doc 05):
+ *      rawPower = floor(score × powerBaseReward / maxExpectedScore)
+ *      power    = clamp(rawPower, 0, powerCapPerSession)
  */
 export function validateGameSession(input: SessionValidationInput): SessionValidationResult {
   const { limits } = input;
@@ -48,30 +63,43 @@ export function validateGameSession(input: SessionValidationInput): SessionValid
   if (!input.game.configuration) return { ok: false, reason: 'GAME_CONFIG_MISSING' };
 
   const cfg = input.game.configuration;
+  const scoreCap = cfg.maxScore > 0 ? cfg.maxScore : cfg.maxExpectedScore;
   if (
     typeof input.score !== 'number' ||
     !Number.isSafeInteger(input.score) ||
     input.score < 0 ||
-    input.score > cfg.maxExpectedScore
+    input.score > scoreCap
   ) {
     return { ok: false, reason: 'SCORE_OUT_OF_RANGE' };
   }
 
   const durationMs = input.finishedAtMs - input.startedAtMs;
-  if (!Number.isFinite(durationMs) || durationMs < limits.minSessionDurationMs) {
+  const minDurationMs =
+    cfg.minDurationSeconds > 0 ? cfg.minDurationSeconds * 1000 : limits.minSessionDurationMs;
+  const maxDurationMs =
+    cfg.durationSeconds > 0
+      ? (cfg.durationSeconds + GAME_DURATION_TOLERANCE_S) * 1000
+      : limits.maxSessionDurationMs;
+  if (!Number.isFinite(durationMs) || durationMs < minDurationMs) {
     return { ok: false, reason: 'DURATION_TOO_SHORT' };
   }
-  if (durationMs > limits.maxSessionDurationMs) {
+  if (durationMs > maxDurationMs) {
     return { ok: false, reason: 'DURATION_TOO_LONG' };
   }
 
   const durationSec = durationMs / 1000;
-  if (input.score / durationSec > limits.maxScorePerSecond) {
+  const rateCap = cfg.maxScorePerSecond > 0 ? cfg.maxScorePerSecond : limits.maxScorePerSecond;
+  if (input.score / durationSec > rateCap) {
     return { ok: false, reason: 'SCORE_RATE_EXCEEDED' };
   }
 
   if (input.sessionsToday >= limits.maxSessionsPerDay) {
     return { ok: false, reason: 'DAILY_LIMIT_REACHED' };
+  }
+
+  if (cfg.powerFormula === 'linear_cap' && cfg.powerCapPerSessionBaseUnits > 0) {
+    const ratio = Math.min(input.score / cfg.maxExpectedScore, 1);
+    return { ok: true, powerAmount: BigInt(Math.floor(ratio * cfg.powerCapPerSessionBaseUnits)) };
   }
 
   const powerBaseReward =
@@ -95,6 +123,12 @@ async function loadGame(db: Firestore, gameId: unknown): Promise<GameDoc | null>
         maxExpectedScore: Number(rawCfg.maxExpectedScore ?? 0),
         powerBaseReward: Number(rawCfg.powerBaseReward ?? 0),
         powerCapPerSession: Number(rawCfg.powerCapPerSession ?? 0),
+        durationSeconds: Number(rawCfg.durationSeconds ?? 0),
+        maxScore: Number(rawCfg.maxScore ?? 0),
+        maxScorePerSecond: Number(rawCfg.maxScorePerSecond ?? 0),
+        minDurationSeconds: Number(rawCfg.minDurationSeconds ?? 0),
+        powerCapPerSessionBaseUnits: Number(rawCfg.powerCapPerSessionBaseUnits ?? 0),
+        powerFormula: typeof rawCfg.powerFormula === 'string' ? rawCfg.powerFormula : '',
       }
     : null;
   if (configuration && configuration.maxExpectedScore <= 0) return {

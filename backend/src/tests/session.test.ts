@@ -23,7 +23,41 @@ const LIMITS: EconomyLimits = {
 const GAME = {
   id: 'tap-blitz',
   enabled: true,
-  configuration: { maxExpectedScore: 1_000, powerBaseReward: 250, powerCapPerSession: 250 },
+  configuration: {
+    maxExpectedScore: 1_000,
+    powerBaseReward: 250,
+    powerCapPerSession: 250,
+    durationSeconds: 0,
+    maxScore: 0,
+    maxScorePerSecond: 0,
+    minDurationSeconds: 0,
+    powerCapPerSessionBaseUnits: 0,
+    powerFormula: '',
+  },
+};
+
+/** Config EXATA semeadas para nova-swarm (autoridade econômica). */
+const NOVA_SWARM = {
+  id: 'nova-swarm',
+  enabled: true,
+  configuration: {
+    powerBaseReward: 0,
+    powerCapPerSession: 0,
+    durationSeconds: 60,
+    baseEnemies: 8,
+    enemiesPerWaveStep: 4,
+    enemyHp: 2,
+    lives: 3,
+    pointsPerKill: 150,
+    pointsPerHit: 25,
+    waveBonus: 500,
+    maxScore: 30_000,
+    maxScorePerSecond: 500,
+    minDurationSeconds: 5,
+    maxExpectedScore: 12_000,
+    powerCapPerSessionBaseUnits: 100_000,
+    powerFormula: 'linear_cap',
+  },
 };
 
 function baseInput(overrides: Partial<Parameters<typeof validateGameSession>[0]> = {}) {
@@ -115,12 +149,89 @@ describe('validateGameSession', () => {
     const g = {
       id: 'g',
       enabled: true,
-      configuration: { maxExpectedScore: 1_000, powerBaseReward: 0, powerCapPerSession: 5_000 },
+      configuration: {
+        maxExpectedScore: 1_000,
+        powerBaseReward: 0,
+        powerCapPerSession: 5_000,
+        durationSeconds: 0,
+        maxScore: 0,
+        maxScorePerSecond: 0,
+        minDurationSeconds: 0,
+        powerCapPerSessionBaseUnits: 0,
+        powerFormula: '',
+      },
     };
     // floor(500 × 1000 / 1000) = 500
     expect(validateGameSession(baseInput({ score: 500, game: g }))).toEqual({
       ok: true,
       powerAmount: 500n,
     });
+  });
+});
+
+describe('validateGameSession — nova-swarm (linear_cap)', () => {
+  function novaInput(overrides: Partial<Parameters<typeof validateGameSession>[0]> = {}) {
+    return baseInput({ game: NOVA_SWARM, score: 6_000, ...overrides });
+  }
+
+  it('fórmula linear_cap: power = floor(min(score/12000,1) × 100000)', () => {
+    // 6000/12000 = 0.5 → 50_000 units = 50 H
+    expect(validateGameSession(novaInput({ score: 6_000 }))).toEqual({
+      ok: true,
+      powerAmount: 50_000n,
+    });
+    // Cap: score ≥ maxExpectedScore → 100_000 units (100 H) — nunca passa do cap
+    expect(validateGameSession(novaInput({ score: 30_000 }))).toEqual({
+      ok: true,
+      powerAmount: 100_000n,
+    });
+    // Score baixo: floor(150/12000 × 100000) = 1250
+    expect(validateGameSession(novaInput({ score: 150 }))).toEqual({
+      ok: true,
+      powerAmount: 1_250n,
+    });
+  });
+
+  it('aceita score até maxScore (30_000) mesmo acima de maxExpectedScore (12_000)', () => {
+    expect(validateGameSession(novaInput({ score: 25_000 })).ok).toBe(true);
+    expect(reasonOf(validateGameSession(novaInput({ score: 30_001 })))).toBe('SCORE_OUT_OF_RANGE');
+  });
+
+  it('duração: 60s nominal; morte antecipada ≥5s é válida; >63s rejeita', () => {
+    const start = 1_000_000;
+    // 60s exatos: ok
+    expect(validateGameSession(novaInput({ startedAtMs: start, finishedAtMs: start + 60_000 })).ok)
+      .toBe(true);
+    // 63s = limite com tolerância de 3s: ok; 63.1s: rejeita
+    expect(validateGameSession(novaInput({ startedAtMs: start, finishedAtMs: start + 63_000 })).ok)
+      .toBe(true);
+    expect(
+      reasonOf(validateGameSession(novaInput({ startedAtMs: start, finishedAtMs: start + 63_100 }))),
+    ).toBe('DURATION_TOO_LONG');
+    // Morte aos 20s (≥ minDurationSeconds 5): válida
+    expect(validateGameSession(novaInput({ startedAtMs: start, finishedAtMs: start + 20_000 })).ok)
+      .toBe(true);
+    // Abaixo de 5s: rejeita
+    expect(
+      reasonOf(validateGameSession(novaInput({ startedAtMs: start, finishedAtMs: start + 4_999 }))),
+    ).toBe('DURATION_TOO_SHORT');
+  });
+
+  it('taxa de score usa o cap do game (500/s)', () => {
+    const start = 1_000_000;
+    // 20_000 em 60s = 333/s < 500/s: ok
+    expect(
+      validateGameSession(novaInput({ score: 20_000, startedAtMs: start, finishedAtMs: start + 60_000 }))
+        .ok,
+    ).toBe(true);
+    // 500 em 1s… abaixo do piso de duração; usa 5s: 500/5 = 100/s ok.
+    // 4_000 em 5s = 800/s > 500/s: rejeita
+    expect(
+      reasonOf(
+        validateGameSession(
+          novaInput({ score: 4_000, startedAtMs: start, finishedAtMs: start + 5_000 }),
+        ),
+      ),
+    ).toBe('SCORE_RATE_EXCEEDED');
   });
 });
