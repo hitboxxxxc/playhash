@@ -18,8 +18,8 @@ export interface AdminContext {
 function resolveKeyPath(): string {
   const fromEnv = process.env.GOOGLE_APPLICATION_CREDENTIALS;
   if (fromEnv && fromEnv.trim().length > 0) return fromEnv;
-  // dist/admin.js -> ../../.secrets => backend/.secrets
-  return path.join(__dirname, '..', '..', '.secrets', 'serviceAccount.json');
+  // dist/admin.js -> ../.secrets => backend/.secrets
+  return path.join(__dirname, '..', '.secrets', 'serviceAccount.json');
 }
 
 export function initAdmin(): AdminContext {
