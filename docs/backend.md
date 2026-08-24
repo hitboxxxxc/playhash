@@ -179,3 +179,29 @@ Após registrar os SHAs, re-baixar `google-services.json` para
 **users/{uid}**: `_ensureUserDoc` grava exatamente o whitelist das rules
 (`displayName, email, photoUrl, createdAt, lastLoginAt, status,
 settings, termsAcceptedAt`) — conforme `firestore.rules`.
+
+### C. NOVA SWARM — config do game e fórmula `linear_cap` (2026-08-24)
+
+1. **`games/nova-swarm`** semeado (idempotente) com a config autoridade:
+   `durationSeconds 60, baseEnemies 8, enemiesPerWaveStep 4, enemyHp 2,
+   lives 3, pointsPerKill 150, pointsPerHit 25, waveBonus 500,
+   maxScore 30000, maxScorePerSecond 500, minDurationSeconds 5,
+   maxExpectedScore 12000, powerCapPerSessionBaseUnits 100000
+   (= 100 H/s com powerBasePerHs 1000), powerFormula "linear_cap"`.
+2. **`validateGameSession`** estendida (compatível com games legados):
+   - teto de score = `maxScore` (se definido) senão `maxExpectedScore`;
+   - duração mínima = `minDurationSeconds` do game (morte antecipada ≥5s é
+     vitória legítima); máxima = `durationSeconds + 3s` (tolerância de
+     relógio; pausas longas no cliente ⇒ `DURATION_TOO_LONG`);
+   - taxa = `maxScorePerSecond` do game senão o limite da economia;
+   - poder: `linear_cap` ⇒ `floor(min(score/maxExpectedScore,1) ×
+     powerCapPerSessionBaseUnits)`; legado ⇒ fórmula proporcional antiga.
+3. **`firestore.rules`**: update de `gameSessions` usa `gameMaxScore()`
+   (`maxScore` quando presente). **PENDÊNCIA (ação humana)**: publicar as
+   rules (Console do Firebase → Rules, ou `firebase deploy --only
+   firestore:rules` com conta autorizada — a conta local recebeu 403
+   serviceusage). Enquanto não publicadas, scores > 12.000 do nova-swarm
+   são rejeitados pelo teto antigo (`maxExpectedScore`).
+4. `firebase.json` adicionado na raiz para `firebase deploy
+   --only firestore:rules` apontar para `firestore.rules` +
+   `firestore.indexes.json`.
