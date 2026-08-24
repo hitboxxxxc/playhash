@@ -23,6 +23,11 @@ class GamesScreen extends ConsumerStatefulWidget {
 
 class _GamesScreenState extends ConsumerState<GamesScreen>
     with AutomaticKeepAliveClientMixin {
+  /// Registry local de jogos COM implementação no app. Games vindos do
+  /// Firestore fora deste conjunto são exibidos como "EM BREVE" com JOGAR
+  /// desabilitado — nunca abrem um playfield sem implementação.
+  static const Set<String> _implementedGames = <String>{'nova-swarm'};
+
   static const List<String> _difficulties = <String>[
     'Fácil',
     'Médio',
@@ -142,6 +147,8 @@ class _GamesScreenState extends ConsumerState<GamesScreen>
                             itemBuilder: (BuildContext context, int index) =>
                                 GameCard(
                               game: filtered[index],
+                              implemented: _implementedGames
+                                  .contains(filtered[index].id),
                               onPlay: () =>
                                   _openGame(context, filtered[index]),
                             ),
@@ -160,6 +167,8 @@ class _GamesScreenState extends ConsumerState<GamesScreen>
   }
 
   void _openGame(BuildContext context, GameModel game) {
+    // Defesa em profundidade: só navega se houver implementação local.
+    if (!_implementedGames.contains(game.id)) return;
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (BuildContext context) => NovaSwarmScreen(game: game),

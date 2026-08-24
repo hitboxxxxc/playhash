@@ -16,12 +16,17 @@ class InstructionsOverlay extends StatelessWidget {
     required this.onStart,
     required this.isLoading,
     this.error,
+    this.onBack,
   });
 
   final GameModel game;
   final VoidCallback onStart;
   final bool isLoading;
   final String? error;
+
+  /// Botão VOLTAR exibido junto ao erro de sessão (o usuário nunca fica
+  /// preso no overlay).
+  final VoidCallback? onBack;
 
   @override
   Widget build(BuildContext context) {
@@ -83,6 +88,14 @@ class InstructionsOverlay extends StatelessWidget {
                 onPressed: onStart,
                 isLoading: isLoading,
               ),
+              if (error != null && onBack != null) ...<Widget>[
+                const SizedBox(height: 10),
+                NeonButton(
+                  label: 'VOLTAR',
+                  onPressed: onBack,
+                  color: AppColors.purple,
+                ),
+              ],
             ],
           ),
         ),

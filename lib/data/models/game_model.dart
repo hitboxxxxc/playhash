@@ -35,6 +35,8 @@ class GameModel {
 }
 
 /// Configuração de gameplay/economia de um game (autoridade: backend).
+/// Campos v2 (mergulhos, tiros inimigos, power-ups) caem em padrões seguros
+/// quando ausentes no doc legado v1.
 class GameConfig {
   const GameConfig({
     required this.durationSeconds,
@@ -51,6 +53,19 @@ class GameConfig {
     required this.maxExpectedScore,
     required this.powerCapPerSessionBaseUnits,
     required this.powerFormula,
+    this.diverKillBonus = 50,
+    this.coinBonus = 250,
+    this.diveIntervalSeconds = 3.0,
+    this.diveIntervalMinSeconds = 1.2,
+    this.diveRampPerWave = 0.05,
+    this.formationShotIntervalSeconds = 4.0,
+    this.enemyBulletSpeed = 220,
+    this.diverSpeed = 260,
+    this.shieldChance = 0.08,
+    this.doubleChance = 0.10,
+    this.coinChance = 0.12,
+    this.shieldSeconds = 6,
+    this.doubleSeconds = 8,
   });
 
   final int durationSeconds;
@@ -68,6 +83,21 @@ class GameConfig {
   final int powerCapPerSessionBaseUnits;
   final String powerFormula;
 
+  // ---- v2: comportamento (paridade com a referência) ----------------------
+  final int diverKillBonus; // +50 por abate de diver
+  final int coinBonus; // +250 por moeda
+  final double diveIntervalSeconds; // intervalo base entre mergulhos
+  final double diveIntervalMinSeconds; // piso do intervalo (rampa)
+  final double diveRampPerWave; // redução do intervalo por wave
+  final double formationShotIntervalSeconds; // tiros da formação
+  final double enemyBulletSpeed; // px/s da orbe inimiga
+  final double diverSpeed; // px/s de descida do diver
+  final double shieldChance; // chance de drop por abate
+  final double doubleChance;
+  final double coinChance;
+  final double shieldSeconds; // duração do escudo
+  final double doubleSeconds; // duração do tiro duplo
+
   /// Espelho SOMENTE-LEITURA da constante econômica `powerBasePerHs`
   /// (config/economy, não legível pelo cliente). Usada exclusivamente para
   /// EXIBIÇÃO estimada ("até +X H/s") — nunca para decidir valores.
@@ -79,22 +109,43 @@ class GameConfig {
   /// Teto de score aceito (maxScore quando definido, senão maxExpectedScore).
   int get scoreCap => maxScore > 0 ? maxScore : maxExpectedScore;
 
-  factory GameConfig.fromMap(Map<String, dynamic> map) => GameConfig(
-        durationSeconds: _int(map['durationSeconds']),
-        baseEnemies: _int(map['baseEnemies']),
-        enemiesPerWaveStep: _int(map['enemiesPerWaveStep']),
-        enemyHp: _int(map['enemyHp']),
-        lives: _int(map['lives']),
-        pointsPerKill: _int(map['pointsPerKill']),
-        pointsPerHit: _int(map['pointsPerHit']),
-        waveBonus: _int(map['waveBonus']),
-        maxScore: _int(map['maxScore']),
-        maxScorePerSecond: _int(map['maxScorePerSecond']),
-        minDurationSeconds: _int(map['minDurationSeconds']),
-        maxExpectedScore: _int(map['maxExpectedScore']),
-        powerCapPerSessionBaseUnits: _int(map['powerCapPerSessionBaseUnits']),
-        powerFormula: (map['powerFormula'] as String?) ?? '',
-      );
+  factory GameConfig.fromMap(Map<String, dynamic> map) {
+    final Map<String, dynamic> chances =
+        (map['powerupChances'] as Map<String, dynamic>?) ?? const <String, dynamic>{};
+    final Map<String, dynamic> durations =
+        (map['powerupDurations'] as Map<String, dynamic>?) ?? const <String, dynamic>{};
+    return GameConfig(
+      durationSeconds: _int(map['durationSeconds']),
+      baseEnemies: _int(map['baseEnemies']),
+      enemiesPerWaveStep: _int(map['enemiesPerWaveStep']),
+      enemyHp: _int(map['enemyHp']),
+      lives: _int(map['lives']),
+      pointsPerKill: _int(map['pointsPerKill']),
+      pointsPerHit: _int(map['pointsPerHit']),
+      waveBonus: _int(map['waveBonus']),
+      maxScore: _int(map['maxScore']),
+      maxScorePerSecond: _int(map['maxScorePerSecond']),
+      minDurationSeconds: _int(map['minDurationSeconds']),
+      maxExpectedScore: _int(map['maxExpectedScore']),
+      powerCapPerSessionBaseUnits: _int(map['powerCapPerSessionBaseUnits']),
+      powerFormula: (map['powerFormula'] as String?) ?? '',
+      diverKillBonus: _int(map['diverKillBonus']),
+      coinBonus: _int(map['coinBonus']),
+      diveIntervalSeconds: _dbl(map['diveIntervalSeconds']),
+      diveIntervalMinSeconds: _dbl(map['diveIntervalMinSeconds']),
+      diveRampPerWave: _dbl(map['diveRampPerWave']),
+      formationShotIntervalSeconds: _dbl(map['formationShotIntervalSeconds']),
+      enemyBulletSpeed: _dbl(map['enemyBulletSpeed']),
+      diverSpeed: _dbl(map['diverSpeed']),
+      shieldChance: _dbl(chances['shield']),
+      doubleChance: _dbl(chances['double']),
+      coinChance: _dbl(chances['coin']),
+      shieldSeconds: _dbl(durations['shieldSeconds']),
+      doubleSeconds: _dbl(durations['doubleSeconds']),
+    );
+  }
 
   static int _int(Object? v) => (v as num?)?.toInt() ?? 0;
+
+  static double _dbl(Object? v) => (v as num?)?.toDouble() ?? 0;
 }

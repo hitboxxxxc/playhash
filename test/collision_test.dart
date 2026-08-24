@@ -112,10 +112,10 @@ void main() {
         playerTargetX: 200,
         elapsed: 1,
         enemies: <Enemy>[
-          // Inimigo descendo sobre o jogador (playerY = 800-96 = 704).
+          // Inimigo descendo sobre o jogador (playerY = 800×0.8 = 640).
           const Enemy(
             x: 200,
-            y: 704,
+            y: 640,
             variant: EnemyVariant.drone,
             hp: 2,
             row: 0,
@@ -155,7 +155,7 @@ void main() {
         enemies: <Enemy>[
           const Enemy(
             x: 200,
-            y: 704,
+            y: 640,
             variant: EnemyVariant.drone,
             hp: 2,
             row: 0,
@@ -173,7 +173,7 @@ void main() {
         enemies: <Enemy>[
           const Enemy(
             x: 200,
-            y: 704,
+            y: 640,
             variant: EnemyVariant.drone,
             hp: 2,
             row: 0,
@@ -218,7 +218,7 @@ void main() {
           enemies: <Enemy>[
             const Enemy(
               x: 200,
-              y: 704,
+              y: 640,
               variant: EnemyVariant.elite,
               hp: 2,
               row: 0,

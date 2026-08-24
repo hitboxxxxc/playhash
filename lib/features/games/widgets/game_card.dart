@@ -16,10 +16,15 @@ class GameCard extends ConsumerWidget {
     super.key,
     required this.game,
     required this.onPlay,
+    this.implemented = true,
   });
 
   final GameModel game;
   final VoidCallback onPlay;
+
+  /// false ⇒ jogo do catálogo SEM implementação local: chip "EM BREVE" +
+  /// botão JOGAR desabilitado (nunca abre um playfield zumbi).
+  final bool implemented;
 
   static const Map<String, (String, Color)> _difficultyLabels = <String, (String, Color)>{
     'easy': ('FÁCIL', AppColors.green),
@@ -48,12 +53,47 @@ class GameCard extends ConsumerWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: <Widget>[
             Expanded(
-              child: ClipPath(
-                clipper: _ChamferClipper(),
-                child: CustomPaint(
-                  painter: NovaSwarmThumbPainter(),
-                  isComplex: true,
-                ),
+              child: Stack(
+                children: <Widget>[
+                  Positioned.fill(
+                    child: ClipPath(
+                      clipper: _ChamferClipper(),
+                      child: CustomPaint(
+                        painter: NovaSwarmThumbPainter(),
+                        isComplex: true,
+                      ),
+                    ),
+                  ),
+                  if (!implemented)
+                    Positioned(
+                      top: 8,
+                      right: 8,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 3,
+                        ),
+                        decoration: ShapeDecoration(
+                          color: AppColors.background.withValues(alpha: 0.85),
+                          shape: ChamferedBorder(
+                            cut: 6,
+                            side: BorderSide(
+                              color: AppColors.purple.withValues(alpha: 0.9),
+                            ),
+                          ),
+                        ),
+                        child: const Text(
+                          'EM BREVE',
+                          style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 1.2,
+                            color: AppColors.purple,
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
               ),
             ),
             const SizedBox(height: 10),
@@ -89,41 +129,56 @@ class GameCard extends ConsumerWidget {
               ],
             ),
             const SizedBox(height: 6),
-            // Feedback não dependente só de cor: rótulo textual + ícone.
-            Text(
-              'Melhor: $best',
-              style: const TextStyle(
-                fontSize: 12,
-                color: AppColors.textSecondary,
+            if (implemented) ...<Widget>[
+              // Feedback não dependente só de cor: rótulo textual + ícone.
+              Text(
+                'Melhor: $best',
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: AppColors.textSecondary,
+                ),
               ),
-            ),
-            const SizedBox(height: 2),
-            Text(
-              rewardHs > 0
-                  ? 'até +$rewardHs H/s por 24h (estimado)'
-                  : 'recompensa a definir pelo servidor',
-              style: const TextStyle(
-                fontSize: 11,
-                color: AppColors.gold,
+              const SizedBox(height: 2),
+              Text(
+                rewardHs > 0
+                    ? 'até +$rewardHs H/s por 24h (estimado)'
+                    : 'recompensa a definir pelo servidor',
+                style: const TextStyle(
+                  fontSize: 11,
+                  color: AppColors.gold,
+                ),
               ),
-            ),
+            ] else
+              const Text(
+                'Disponível em uma próxima atualização.',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: AppColors.textSecondary,
+                ),
+              ),
             const SizedBox(height: 10),
             SizedBox(
               height: 44, // >= 44dp; área de toque confortável
               child: ElevatedButton(
-                onPressed: onPlay,
+                onPressed: implemented ? onPlay : null,
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.cyan,
-                  foregroundColor: AppColors.background,
+                  backgroundColor:
+                      implemented ? AppColors.cyan : AppColors.surface,
+                  foregroundColor: implemented
+                      ? AppColors.background
+                      : AppColors.textSecondary,
                   elevation: 0,
                   shape: const ChamferedBorder(cut: 8),
+                  side: implemented
+                      ? null
+                      : BorderSide(color: AppColors.textSecondary),
                   textStyle: const TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w800,
                     letterSpacing: 1.6,
                   ),
                 ),
-                child: const Text('JOGAR'),
+                child: Text(implemented ? 'JOGAR' : 'EM BREVE'),
               ),
             ),
           ],

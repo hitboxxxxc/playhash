@@ -13,6 +13,8 @@ enum NovaSwarmEndReason { timeUp, dead }
 
 /// Config de gameplay derivada da config RECEBIDA do backend (nunca
 /// inventada no cliente). Valores 0 caem em padrões seguros de exibição.
+/// Campos v2 (mergulhos, tiros inimigos, power-ups) têm defaults = config
+/// autoritativa do backend (seed v2) para docs legados.
 class NovaSwarmConfig {
   const NovaSwarmConfig({
     required this.durationSeconds,
@@ -23,6 +25,19 @@ class NovaSwarmConfig {
     required this.pointsPerKill,
     required this.pointsPerHit,
     required this.waveBonus,
+    this.diverKillBonus = 50,
+    this.coinBonus = 250,
+    this.diveIntervalSeconds = 3.0,
+    this.diveIntervalMinSeconds = 1.2,
+    this.diveRampPerWave = 0.05,
+    this.formationShotIntervalSeconds = 4.0,
+    this.enemyBulletSpeed = 220,
+    this.diverSpeed = 260,
+    this.shieldChance = 0.08,
+    this.doubleChance = 0.10,
+    this.coinChance = 0.12,
+    this.shieldSeconds = 6,
+    this.doubleSeconds = 8,
   });
 
   factory NovaSwarmConfig.fromGame(GameModel game) {
@@ -36,6 +51,24 @@ class NovaSwarmConfig {
       pointsPerKill: c.pointsPerKill,
       pointsPerHit: c.pointsPerHit,
       waveBonus: c.waveBonus,
+      diverKillBonus: c.diverKillBonus,
+      coinBonus: c.coinBonus,
+      diveIntervalSeconds:
+          c.diveIntervalSeconds > 0 ? c.diveIntervalSeconds : 3.0,
+      diveIntervalMinSeconds: c.diveIntervalMinSeconds > 0
+          ? c.diveIntervalMinSeconds
+          : 1.2,
+      diveRampPerWave: c.diveRampPerWave,
+      formationShotIntervalSeconds: c.formationShotIntervalSeconds > 0
+          ? c.formationShotIntervalSeconds
+          : 4.0,
+      enemyBulletSpeed: c.enemyBulletSpeed > 0 ? c.enemyBulletSpeed : 220,
+      diverSpeed: c.diverSpeed > 0 ? c.diverSpeed : 260,
+      shieldChance: c.shieldChance,
+      doubleChance: c.doubleChance,
+      coinChance: c.coinChance,
+      shieldSeconds: c.shieldSeconds > 0 ? c.shieldSeconds : 6,
+      doubleSeconds: c.doubleSeconds > 0 ? c.doubleSeconds : 8,
     );
   }
 
@@ -47,6 +80,21 @@ class NovaSwarmConfig {
   final int pointsPerKill;
   final int pointsPerHit;
   final int waveBonus;
+
+  // ---- v2 ------------------------------------------------------------------
+  final int diverKillBonus; // +50 por abate de diver
+  final int coinBonus; // +250 por moeda
+  final double diveIntervalSeconds; // 3.0s base entre mergulhos
+  final double diveIntervalMinSeconds; // piso 1.2s
+  final double diveRampPerWave; // −0.05s por wave
+  final double formationShotIntervalSeconds; // 4.0s (±2s rand no cliente)
+  final double enemyBulletSpeed; // 220 px/s
+  final double diverSpeed; // 260 px/s
+  final double shieldChance; // 0.08
+  final double doubleChance; // 0.10
+  final double coinChance; // 0.12
+  final double shieldSeconds; // 6s
+  final double doubleSeconds; // 8s
 }
 
 /// Estado IMUTÁVEL por frame. Tempo interno = "tempo de jogo" (só avança
@@ -72,6 +120,16 @@ class NovaSwarmState {
     this.stars = const <Star>[],
     this.shootingStar,
     this.nextShootingStarAt = 0,
+    this.powerUps = const <PowerUp>[],
+    this.floatingTexts = const <FloatingText>[],
+    this.shieldUntil = -1,
+    this.doubleUntil = -1,
+    this.doubleLevel = 0,
+    this.nextDiveAt = 2.5,
+    this.nextFormationShotAt = 3.0,
+    this.coinsCollected = 0,
+    this.shieldsCollected = 0,
+    this.doublesCollected = 0,
     this.score = 0,
     this.kills = 0,
     this.hits = 0,
@@ -102,12 +160,26 @@ class NovaSwarmState {
 
   // Entidades
   final List<Enemy> enemies;
-  final List<Bullet> bullets;
+  final List<Bullet> bullets; // jogador (sobe) + orbes inimigas (descem)
   final List<Particle> particles;
-  final List<Shockwave> shockwaves;
+  final List<Shockwave> shockwaves; // starbursts
   final List<Star> stars;
   final ShootingStar? shootingStar;
   final double nextShootingStarAt;
+
+  // Power-ups (v2)
+  final List<PowerUp> powerUps;
+  final List<FloatingText> floatingTexts;
+  final double shieldUntil; // escudo ativo até (absorve 1 hit)
+  final double doubleUntil; // tiro duplo/nível 3 até
+  final int doubleLevel; // 0 inativo · 2 = 2 bolts · 3 = 3 bolts
+  final int coinsCollected;
+  final int shieldsCollected;
+  final int doublesCollected;
+
+  // Schedulers (v2)
+  final double nextDiveAt; // próximo mergulho programado
+  final double nextFormationShotAt; // próximo tiro da formação
 
   // Placar
   final int score;
@@ -123,8 +195,9 @@ class NovaSwarmState {
 
   final NovaSwarmEndReason? endReason;
 
-  /// Y fixo do jogador (px lógicos a partir do topo).
-  double get playerY => fieldSize.height - 96;
+  /// Y fixo do jogador: centro-x na criação, 80% da altura do campo —
+  /// sempre dentro da área visível (independe de insets do dispositivo).
+  double get playerY => fieldSize.height * 0.8;
 
   /// Largura do sprite do jogador (dp).
   static const double playerWidth = 52;
@@ -134,12 +207,20 @@ class NovaSwarmState {
 
   bool get isInvulnerable => elapsed < invulnUntil;
 
+  bool get isShieldActive => elapsed < shieldUntil;
+
+  bool get isDoubleActive => elapsed < doubleUntil && doubleLevel > 0;
+
   bool get isBannerActive => elapsed < bannerUntil;
 
   bool get isShaking => elapsed < shakeUntil;
 
-  /// Score de EXIBIÇÃO (o oficial é o backend): kills×kill + hits×hit + waves×bônus.
+  /// Score de EXIBIÇÃO (o oficial é o backend).
   int get displayScore => score;
+
+  /// Total de power-ups coletados (painel final).
+  int get totalPowerUpsCollected =>
+      coinsCollected + shieldsCollected + doublesCollected;
 
   NovaSwarmState copyWith({
     NovaSwarmPhase? phase,
@@ -159,6 +240,16 @@ class NovaSwarmState {
     List<Star>? stars,
     Object? shootingStar = _sentinel,
     double? nextShootingStarAt,
+    List<PowerUp>? powerUps,
+    List<FloatingText>? floatingTexts,
+    double? shieldUntil,
+    double? doubleUntil,
+    int? doubleLevel,
+    double? nextDiveAt,
+    double? nextFormationShotAt,
+    int? coinsCollected,
+    int? shieldsCollected,
+    int? doublesCollected,
     int? score,
     int? kills,
     int? hits,
@@ -191,6 +282,16 @@ class NovaSwarmState {
             ? this.shootingStar
             : shootingStar as ShootingStar?,
         nextShootingStarAt: nextShootingStarAt ?? this.nextShootingStarAt,
+        powerUps: powerUps ?? this.powerUps,
+        floatingTexts: floatingTexts ?? this.floatingTexts,
+        shieldUntil: shieldUntil ?? this.shieldUntil,
+        doubleUntil: doubleUntil ?? this.doubleUntil,
+        doubleLevel: doubleLevel ?? this.doubleLevel,
+        nextDiveAt: nextDiveAt ?? this.nextDiveAt,
+        nextFormationShotAt: nextFormationShotAt ?? this.nextFormationShotAt,
+        coinsCollected: coinsCollected ?? this.coinsCollected,
+        shieldsCollected: shieldsCollected ?? this.shieldsCollected,
+        doublesCollected: doublesCollected ?? this.doublesCollected,
         score: score ?? this.score,
         kills: kills ?? this.kills,
         hits: hits ?? this.hits,
@@ -276,10 +377,12 @@ NovaSwarmState createInitialState({
       enemiesPerWaveStep: config.enemiesPerWaveStep,
       enemyHp: config.enemyHp,
       fieldWidth: fieldSize.width,
+      topY: fieldSize.height * 0.08,
     ),
     bannerText: 'WAVE 1',
     bannerUntil: 1.0,
     nextShootingStarAt: 6 + rng.nextDouble() * 6,
+    nextDiveAt: 2.5,
+    nextFormationShotAt: 3.0,
   );
 }
-

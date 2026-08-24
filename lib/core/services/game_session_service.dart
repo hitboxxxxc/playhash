@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
@@ -73,10 +75,17 @@ class GameSessionService {
   GameSessionService({
     GameSessionsRepositoryApi? repository,
     this.maxFinishAttempts = 4,
+    this.startTimeout = const Duration(seconds: 5),
+    this.maxStartAttempts = 2,
   }) : _repositoryOverride = repository;
 
   final GameSessionsRepositoryApi? _repositoryOverride;
   final int maxFinishAttempts;
+
+  /// Timeout por tentativa de abertura de sessão. Estourou ⇒ retry; falhou
+  /// tudo ⇒ erro visível (o playfield NUNCA abre sem sessão 'open').
+  final Duration startTimeout;
+  final int maxStartAttempts;
 
   String? _clientVersion;
 
@@ -84,23 +93,40 @@ class GameSessionService {
       _repositoryOverride ?? GameSessionsRepository();
 
   /// Cria a sessão ANTES do play. Retorna o sessionId.
+  ///
+  /// Timeout de [startTimeout] por tentativa com até [maxStartAttempts]
+  /// tentativas (erros definitivos como permission-denied não repetem).
   Future<String> startSession({
     required String uid,
     required String gameId,
   }) async {
-    try {
-      return await _repository.createSession(
-        uid: uid,
-        gameId: gameId,
-        clientVersion: await _version(),
-      );
-    } on FirebaseException catch (e) {
-      throw GameSessionException(_mapError(e));
-    } catch (_) {
-      throw GameSessionException(
-        'Não foi possível iniciar a sessão. Verifique sua conexão e tente de novo.',
-      );
+    final String clientVersion = await _version();
+    Object? lastError;
+    for (int attempt = 0; attempt < maxStartAttempts; attempt++) {
+      try {
+        return await _repository
+            .createSession(
+              uid: uid,
+              gameId: gameId,
+              clientVersion: clientVersion,
+            )
+            .timeout(startTimeout);
+      } on FirebaseException catch (e) {
+        // Erro de regra/rede definitivo: repetir não muda o resultado.
+        throw GameSessionException(_mapError(e));
+      } on TimeoutException {
+        lastError = 'timeout';
+      } catch (e) {
+        lastError = e;
+      }
     }
+    throw GameSessionException(
+      lastError == 'timeout'
+          ? 'A criação da sessão demorou demais. Verifique sua conexão '
+              'e tente novamente.'
+          : 'Não foi possível iniciar a sessão. Verifique sua conexão '
+              'e tente de novo.',
+    );
   }
 
   /// Envia o score (update único open→finished). Retry seguro: se o update

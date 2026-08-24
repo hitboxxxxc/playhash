@@ -3,6 +3,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
+import 'dive_controller.dart';
 import 'entities.dart';
 import 'game_state.dart';
 
@@ -147,11 +148,13 @@ class NovaSwarmPainter extends CustomPainter {
     _paintNebulas(canvas, size);
     _paintStars(canvas, s);
     _paintShootingStar(canvas, s);
+    _paintPowerUps(canvas, s);
     _paintBullets(canvas, s);
     _paintEnemies(canvas, s);
     _paintPlayer(canvas, s);
     _paintParticles(canvas, s);
     _paintShockwaves(canvas, s);
+    _paintFloatingTexts(canvas, s);
     _paintBanner(canvas, s, size);
 
     canvas.restore();
@@ -218,7 +221,21 @@ class NovaSwarmPainter extends CustomPainter {
 
   void _paintBullets(Canvas canvas, NovaSwarmState s) {
     for (final Bullet b in s.bullets) {
-      // Trilha com alpha decrescente.
+      if (b.isEnemy) {
+        // ORBE INIMIGA (v2): esfera laranja 6dp com glow.
+        _paint
+          ..resetP()
+          ..color = const Color(0xFFFF8A3D)
+          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 5);
+        canvas.drawCircle(Offset(b.x, b.y), 6, _paint);
+        _paint.maskFilter = null;
+        canvas.drawCircle(Offset(b.x, b.y), 6, _paint);
+        // Núcleo claro.
+        _paint.color = const Color(0xFFFFD9A8);
+        canvas.drawCircle(Offset(b.x, b.y), 2.5, _paint);
+        continue;
+      }
+      // Tiro do jogador: trilha com alpha decrescente.
       _paint
         ..resetP()
         ..color = const Color(0xFF7DF3FF).withValues(alpha: 0.25);
@@ -248,15 +265,126 @@ class NovaSwarmPainter extends CustomPainter {
     }
   }
 
+  /// POWER-UPS caindo (v2): domo azul · par de bolts · moeda hex — 100% código.
+  void _paintPowerUps(Canvas canvas, NovaSwarmState s) {
+    for (final PowerUp pu in s.powerUps) {
+      final double pulse =
+          1 + 0.08 * math.sin((s.elapsed - pu.bornAt) * 8 * math.pi);
+      canvas.save();
+      canvas.translate(pu.x, pu.y);
+      canvas.scale(pulse, pulse);
+      switch (pu.type) {
+        case PowerUpType.shield:
+          // Domo azul translúcido com contorno ciano.
+          final Path dome = Path()
+            ..moveTo(-11, 9)
+            ..arcToPoint(const Offset(11, 9),
+                radius: const Radius.circular(11), largeArc: false)
+            ..close();
+          _paint
+            ..resetP()
+            ..color = const Color(0xFF2979FF).withValues(alpha: 0.35);
+          canvas.drawPath(dome, _paint);
+          _paint
+            ..color = const Color(0xFF7DD3FF)
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 2;
+          canvas.drawPath(dome, _paint);
+          break;
+        case PowerUpType.doubleShot:
+          // Par de bolts amarelos inclinados.
+          for (final double dx in const <double>[-6, 6]) {
+            final Path bolt = Path()
+              ..moveTo(dx + 2, -10)
+              ..lineTo(dx - 3, 0)
+              ..lineTo(dx + 0.5, 0)
+              ..lineTo(dx - 2, 10)
+              ..lineTo(dx + 4, -1)
+              ..lineTo(dx + 0.5, -1)
+              ..close();
+            _paint
+              ..resetP()
+              ..color = const Color(0xFFFFC400);
+            canvas.drawPath(bolt, _paint);
+          }
+          break;
+        case PowerUpType.coin:
+          // Moeda HEXAGONAL própria dourada com brilho interno.
+          final Path hex = Path();
+          for (int i = 0; i < 6; i++) {
+            final double a = -math.pi / 2 + i * math.pi / 3;
+            final double hx = 10 * math.cos(a);
+            final double hy = 10 * math.sin(a);
+            if (i == 0) {
+              hex.moveTo(hx, hy);
+            } else {
+              hex.lineTo(hx, hy);
+            }
+          }
+          hex.close();
+          _paint
+            ..resetP()
+            ..shader = ui.Gradient.linear(
+              const Offset(-10, -10),
+              const Offset(10, 10),
+              <Color>[const Color(0xFFFFE082), const Color(0xFFFFA000)],
+            );
+          canvas.drawPath(hex, _paint);
+          _paint
+            ..shader = null
+            ..color = const Color(0xFFFFF8E1)
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 1.5;
+          canvas.drawPath(hex, _paint);
+          _paint
+            ..style = PaintingStyle.fill
+            ..color = const Color(0xFFFFC107).withValues(alpha: 0.9);
+          canvas.drawCircle(Offset.zero, 4, _paint);
+          break;
+      }
+      canvas.restore();
+    }
+  }
+
+  /// Textos flutuantes ("+250"): sobem e desvanecem.
+  void _paintFloatingTexts(Canvas canvas, NovaSwarmState s) {
+    for (final FloatingText ft in s.floatingTexts) {
+      final double t = ((s.elapsed - ft.bornAt) / ft.life).clamp(0.0, 1.0);
+      _textPainter
+        ..text = TextSpan(
+          text: ft.text,
+          style: TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w800,
+            letterSpacing: 1,
+            color: ft.color.withValues(alpha: 1 - t),
+          ),
+        )
+        ..layout();
+      _textPainter.paint(canvas, Offset(ft.x - _textPainter.width / 2, ft.y));
+    }
+  }
+
   void _paintEnemies(Canvas canvas, NovaSwarmState s) {
     const double pixel = 3;
     for (final Enemy e in s.enemies) {
       final bool flash = s.elapsed < e.hitFlashUntil;
       final Color base = NovaSwarmSprites.colors[e.variant]!;
+      // Diver em RETORNO reaparece com fade (alpha = progresso do retorno).
+      double alpha = 1;
+      if (e.isDiver && e.isReturning) {
+        alpha = DiveController.returnAlpha(
+          DiveController.returnProgress(
+            elapsed: s.elapsed,
+            returnStartedAt: e.returnStartedAt,
+          ),
+        );
+      }
       _paint
         ..resetP()
         ..style = PaintingStyle.fill
-        ..color = flash ? const Color(0xFFFFFFFF) : base;
+        ..color =
+            flash ? const Color(0xFFFFFFFF) : base.withValues(alpha: alpha);
       canvas.save();
       canvas.translate(e.x - 9 * pixel / 2, e.y - 7 * pixel / 2);
       canvas.scale(pixel);
@@ -266,7 +394,7 @@ class NovaSwarmPainter extends CustomPainter {
         canvas.drawRect(r, _paint);
       }
       // Olhos 1px branco.
-      _paint.color = const Color(0xFFFFFFFF);
+      _paint.color = const Color(0xFFFFFFFF).withValues(alpha: alpha);
       for (final (int, int) eye in NovaSwarmSprites.eyes[e.variant]!) {
         canvas.drawRect(Rect.fromLTWH(eye.$1.toDouble(), eye.$2.toDouble(), 1, 1), _paint);
       }
@@ -343,6 +471,26 @@ class NovaSwarmPainter extends CustomPainter {
         ..strokeWidth = 1.5;
       canvas.drawCircle(Offset(26, 22), 34, _paint);
     }
+
+    // DOMO DE ESCUDO (power-up v2): azul translúcido pulsando levemente.
+    if (s.isShieldActive) {
+      final double pulse =
+          1 + 0.04 * math.sin(s.elapsed * 6 * math.pi);
+      final Rect domeRect = Rect.fromCenter(
+        center: const Offset(26, 24),
+        width: 84 * pulse,
+        height: 76 * pulse,
+      );
+      _paint
+        ..resetP()
+        ..color = const Color(0xFF2979FF).withValues(alpha: 0.22);
+      canvas.drawArc(domeRect, math.pi, math.pi, true, _paint);
+      _paint
+        ..color = const Color(0xFF7DD3FF).withValues(alpha: 0.75)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2;
+      canvas.drawArc(domeRect, math.pi, math.pi, true, _paint);
+    }
     canvas.restore();
   }
 
@@ -356,12 +504,35 @@ class NovaSwarmPainter extends CustomPainter {
     }
   }
 
+  /// Explosões STARBURST (v2): estrela de 5–6 pontas girando + anel.
   void _paintShockwaves(Canvas canvas, NovaSwarmState s) {
     for (final Shockwave w in s.shockwaves) {
       final double t = ((s.elapsed - w.bornAt) / w.life).clamp(0.0, 1.0);
+      // Estrela de pontas alternadas (raio externo → interno).
+      final double outer = 6 + t * 30;
+      final double inner = outer * 0.45;
+      final int points = w.starPoints;
+      final Path star = Path();
+      for (int i = 0; i < points * 2; i++) {
+        final double angle =
+            -math.pi / 2 + i * math.pi / points + t * math.pi / 3;
+        final double r = i.isEven ? outer : inner;
+        final double px = w.x + r * math.cos(angle);
+        final double py = w.y + r * math.sin(angle);
+        if (i == 0) {
+          star.moveTo(px, py);
+        } else {
+          star.lineTo(px, py);
+        }
+      }
+      star.close();
       _paint
         ..resetP()
-        ..color = const Color(0xFF7DF3FF).withValues(alpha: (1 - t) * 0.8)
+        ..color = w.color.withValues(alpha: (1 - t) * 0.85);
+      canvas.drawPath(star, _paint);
+      // Anel de choque por cima.
+      _paint
+        ..color = const Color(0xFF7DF3FF).withValues(alpha: (1 - t) * 0.6)
         ..style = PaintingStyle.stroke
         ..strokeWidth = 2;
       canvas.drawCircle(Offset(w.x, w.y), 4 + t * 26, _paint);

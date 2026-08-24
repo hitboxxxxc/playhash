@@ -1,6 +1,7 @@
 import 'dart:ui';
 
 import 'game_state.dart';
+import 'physics.dart';
 
 /// Controle por toque: onPanDown/Move define o ALVO horizontal; a nave faz
 /// lerp 0.22/frame (em [physics.dart]); onPanEnd para os tiros.
@@ -11,7 +12,7 @@ class NovaSwarmInputController {
   /// Aplica (targetX, shooting) ao estado corrente.
   final void Function(double targetX, bool shooting) _update;
 
-  final double _margin = 26;
+  final double _margin = NovaSwarmPhysics.playerMargin;
 
   /// Margem interna de clamp nas bordas (dp).
   double get margin => _margin;

@@ -28,12 +28,18 @@ abstract final class WaveSpawner {
   /// Gera a formação da [wave]. Determinística por wave (Random semeado),
   /// com ELITE na primeira fileira (a partir da wave 2) e WASP nas fileiras
   /// do meio — DRONE preenche o resto.
+  /// [topY] = topo da formação (v2: 8% da altura do campo; default legado).
+  /// [offsetX]/[offsetY] = sway/bob ATUAIS ao spawnar no meio da partida —
+  /// mantém todos os inimigos na mesma referência absoluta do delta-sway.
   static List<Enemy> spawnWave({
     required int wave,
     required int baseEnemies,
     required int enemiesPerWaveStep,
     required int enemyHp,
     required double fieldWidth,
+    double topY = formationTop,
+    double offsetX = 0,
+    double offsetY = 0,
   }) {
     final int count = enemyCountForWave(
       wave,
@@ -56,8 +62,8 @@ abstract final class WaveSpawner {
           (fieldWidth - (colsInRow - 1) * colSpacing) / 2;
       enemies.add(
         Enemy(
-          x: rowStartX + col * colSpacing,
-          y: formationTop + row * rowSpacing,
+          x: rowStartX + col * colSpacing + offsetX,
+          y: topY + row * rowSpacing + offsetY,
           variant: _variantFor(row: row, col: col, rows: rows, rng: rng, wave: wave),
           hp: enemyHp,
           row: row,

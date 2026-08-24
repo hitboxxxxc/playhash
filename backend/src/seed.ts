@@ -51,6 +51,39 @@ const MACHINES: Record<string, Record<string, unknown>> = {
   },
 };
 
+// Config v2 de gameplay do NOVA SWARM (autoridade de validação do backend).
+// Campos econômicos (maxScore/maxScorePerSecond/maxExpectedScore/power*) são
+// PRESERVADOS da v1 — a economia continua 100% autorizada pelo backend.
+const NOVA_SWARM_V2_CONFIGURATION: Record<string, unknown> = {
+  durationSeconds: 60,
+  baseEnemies: 8,
+  enemiesPerWaveStep: 4,
+  enemyHp: 2,
+  lives: 3,
+  pointsPerKill: 150,
+  pointsPerHit: 25,
+  waveBonus: 500,
+  diverKillBonus: 50,
+  coinBonus: 250,
+  maxScore: 30_000,
+  maxScorePerSecond: 500,
+  minDurationSeconds: 5,
+  maxExpectedScore: 12_000,
+  powerCapPerSessionBaseUnits: 100_000,
+  powerFormula: 'linear_cap',
+  // Mergulhos: intervalo base com rampa por wave até o mínimo.
+  diveIntervalSeconds: 3.0,
+  diveIntervalMinSeconds: 1.2,
+  diveRampPerWave: 0.05,
+  // Tiros da formação: intervalo base (cliente aplica ±2s aleatório).
+  formationShotIntervalSeconds: 4.0,
+  enemyBulletSpeed: 220,
+  diverSpeed: 260,
+  // Power-ups: chance por abate e duração dos temporários.
+  powerupChances: { shield: 0.08, double: 0.1, coin: 0.12 },
+  powerupDurations: { shieldSeconds: 6, doubleSeconds: 8 },
+};
+
 const GAMES: Record<string, Record<string, unknown>> = {
   'tap-blitz': {
     name: 'Tap Blitz',
@@ -75,27 +108,15 @@ const GAMES: Record<string, Record<string, unknown>> = {
   //   power = floor(min(score / maxExpectedScore, 1) × powerCapPerSessionBaseUnits)
   // powerCapPerSessionBaseUnits = 100_000 units = 100 H/s (powerBasePerHs = 1_000).
   // Fácil = mais pontos (pointsPerKill 150); médios/duros futuros usarão menos.
+  //
+  // v2: countdown, mergulhos programados, tiros inimigos, power-ups
+  // (escudo/tiro duplo/moeda) e paridade comportamental com a referência.
   'nova-swarm': {
     name: 'NOVA SWARM',
     difficulty: 'easy',
     enabled: true,
-    version: 1,
-    configuration: {
-      durationSeconds: 60,
-      baseEnemies: 8,
-      enemiesPerWaveStep: 4,
-      enemyHp: 2,
-      lives: 3,
-      pointsPerKill: 150,
-      pointsPerHit: 25,
-      waveBonus: 500,
-      maxScore: 30_000,
-      maxScorePerSecond: 500,
-      minDurationSeconds: 5,
-      maxExpectedScore: 12_000,
-      powerCapPerSessionBaseUnits: 100_000,
-      powerFormula: 'linear_cap',
-    },
+    version: 2,
+    configuration: NOVA_SWARM_V2_CONFIGURATION,
   },
 };
 
@@ -111,6 +132,34 @@ async function createIfMissing(
   return 'created';
 }
 
+/**
+ * Upgrade IDEMPOTENTE da config do NOVA SWARM para v2: se o doc existir com
+ * version < 2, faz MERGE dos campos novos na configuration existente (nunca
+ * remove campos v1 — economia preservada). Rodar novamente = no-op.
+ */
+async function upgradeNovaSwarmToV2(
+  db: ReturnType<typeof initAdmin>['db'],
+): Promise<'upgraded' | 'current' | 'created'> {
+  const ref = db.doc('games/nova-swarm');
+  const snap = await ref.get();
+  if (!snap.exists) {
+    await ref.set(GAMES['nova-swarm']);
+    return 'created';
+  }
+  const data = snap.data() ?? {};
+  const version = typeof data.version === 'number' ? data.version : 1;
+  if (version >= 2) return 'current';
+  const existingCfg = (data.configuration ?? {}) as Record<string, unknown>;
+  await ref.set(
+    {
+      version: 2,
+      configuration: { ...existingCfg, ...NOVA_SWARM_V2_CONFIGURATION },
+    },
+    { merge: true },
+  );
+  return 'upgraded';
+}
+
 async function main(): Promise<void> {
   if (process.env.NODE_ENV === 'production') {
     throw new Error('SEED_BLOCKED_IN_PRODUCTION');
@@ -123,8 +172,10 @@ async function main(): Promise<void> {
     console.log(`[seed] config/catalog/machines/${id}: ${await createIfMissing(db, `config/catalog/machines/${id}`, data)}`);
   }
   for (const [id, data] of Object.entries(GAMES)) {
+    if (id === 'nova-swarm') continue; // tratado abaixo com upgrade idempotente
     console.log(`[seed] games/${id}: ${await createIfMissing(db, `games/${id}`, data)}`);
   }
+  console.log(`[seed] games/nova-swarm (v2): ${await upgradeNovaSwarmToV2(db)}`);
   console.log('[seed] done');
 }
 

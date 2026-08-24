@@ -17,6 +17,9 @@ class NovaSwarmHud extends StatelessWidget {
     required this.lives,
     required this.maxLives,
     required this.wave,
+    this.shieldRemaining = 0,
+    this.doubleRemaining = 0,
+    this.doubleLevel = 0,
     this.onPause,
   });
 
@@ -25,6 +28,12 @@ class NovaSwarmHud extends StatelessWidget {
   final int lives;
   final int maxLives;
   final int wave;
+
+  /// Fração restante dos power-ups ativos (0 = inativo) — anel de tempo.
+  final double shieldRemaining;
+  final double doubleRemaining;
+  final int doubleLevel; // 2 = bolts duplos · 3 = triplos
+
   final VoidCallback? onPause;
 
   @override
@@ -136,6 +145,30 @@ class NovaSwarmHud extends StatelessWidget {
                         color: AppColors.purple,
                       ),
                     ),
+                    // Ícones de power-ups ativos com anel de tempo restante.
+                    if (shieldRemaining > 0 || doubleRemaining > 0) ...<Widget>[
+                      const SizedBox(height: 3),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: <Widget>[
+                          if (shieldRemaining > 0)
+                            _PowerUpRing(
+                              fraction: shieldRemaining,
+                              color: const Color(0xFF2979FF),
+                              icon: Icons.shield_outlined,
+                            ),
+                          if (shieldRemaining > 0 && doubleRemaining > 0)
+                            const SizedBox(width: 4),
+                          if (doubleRemaining > 0)
+                            _PowerUpRing(
+                              fraction: doubleRemaining,
+                              color: AppColors.gold,
+                              icon: Icons.bolt_rounded,
+                              label: doubleLevel >= 3 ? '×3' : null,
+                            ),
+                        ],
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -190,4 +223,91 @@ class _MiniShipPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _MiniShipPainter oldDelegate) =>
       oldDelegate.active != active;
+}
+
+/// Ícone pequeno de power-up ativo com anel de tempo restante (arco 360°).
+class _PowerUpRing extends StatelessWidget {
+  const _PowerUpRing({
+    required this.fraction,
+    required this.color,
+    required this.icon,
+    this.label,
+  });
+
+  final double fraction; // 0..1 tempo restante
+  final Color color;
+  final IconData icon;
+  final String? label;
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+        width: 18,
+        height: 18,
+        child: CustomPaint(
+          painter: _PowerUpRingPainter(
+            fraction: fraction.clamp(0.0, 1.0),
+            color: color,
+            label: label,
+          ),
+          child: Icon(icon, size: 10, color: color),
+        ),
+      );
+}
+
+class _PowerUpRingPainter extends CustomPainter {
+  _PowerUpRingPainter({
+    required this.fraction,
+    required this.color,
+    required this.label,
+  });
+
+  final double fraction;
+  final Color color;
+  final String? label;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final Paint p = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2
+      ..strokeCap = StrokeCap.round;
+    // Trilha.
+    p.color = color.withValues(alpha: 0.2);
+    canvas.drawCircle(
+        Offset(size.width / 2, size.height / 2), size.width / 2 - 1, p);
+    // Arco de tempo restante (começa no topo, sentido horário).
+    p.color = color;
+    canvas.drawArc(
+      Rect.fromCircle(
+        center: Offset(size.width / 2, size.height / 2),
+        radius: size.width / 2 - 1,
+      ),
+      -math.pi / 2,
+      2 * math.pi * fraction,
+      false,
+      p,
+    );
+    if (label != null) {
+      final TextPainter tp = TextPainter(textDirection: TextDirection.ltr)
+        ..text = TextSpan(
+          text: label,
+          style: TextStyle(
+            fontSize: 7,
+            fontWeight: FontWeight.w800,
+            color: color,
+          ),
+        )
+        ..layout();
+      tp.paint(
+        canvas,
+        Offset(size.width - tp.width - 1, size.height / 2 - tp.height / 2),
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _PowerUpRingPainter oldDelegate) =>
+      oldDelegate.fraction != fraction ||
+      oldDelegate.color != color ||
+      oldDelegate.label != label;
 }

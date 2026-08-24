@@ -8,10 +8,14 @@ import '../../../../core/services/game_session_service.dart';
 
 /// Estado do fluxo pós-partida (score local é PROVISÓRIO — o backend valida
 /// e CONCEDE o poder; doc 05 §51).
-enum ResultStage { sending, validating, granted, rejected, sendFailed }
+///
+/// [idle] = partida encerrou e o jogador ainda NÃO tocou em
+/// "COLETAR RECOMPENSA" (que garante o finishSession com retry idempotente).
+enum ResultStage { idle, sending, validating, granted, rejected, sendFailed }
 
-/// Overlay de resultado: score/kills/waves + status do servidor
-/// ("Enviando resultado…" → "Em validação pelo servidor" →
+/// Overlay de resultado: título por motivo de fim ("TEMPO ESGOTADO" /
+/// "FIM DE JOGO"), Score/Kills/Waves/power-ups coletados + status do servidor
+/// ("Enviando resultado…" → "Em validação pelo servidor…" →
 /// "+X H/s por 24h · expira HH:mm" ou rejeição com mensagem segura).
 class ResultOverlay extends StatelessWidget {
   const ResultOverlay({
@@ -20,8 +24,11 @@ class ResultOverlay extends StatelessWidget {
     required this.score,
     required this.kills,
     required this.waves,
+    this.endReason,
+    this.powerUpsCollected = 0,
     this.serverResult,
     this.onRetry,
+    this.onCollect,
     required this.onBack,
   });
 
@@ -29,12 +36,37 @@ class ResultOverlay extends StatelessWidget {
   final int score;
   final int kills;
   final int waves;
+
+  /// 'timeUp' ⇒ "TEMPO ESGOTADO"; 'dead' ⇒ "FIM DE JOGO".
+  final String? endReason;
+
+  /// Total de power-ups coletados na partida.
+  final int powerUpsCollected;
+
   final GameSessionServerResult? serverResult;
   final VoidCallback? onRetry;
+
+  /// Dispara o finishSession (retry seguro/idempotente).
+  final VoidCallback? onCollect;
+
   final VoidCallback onBack;
+
+  String get _title {
+    if (stage == ResultStage.granted) return 'VITÓRIA!';
+    switch (endReason) {
+      case 'timeUp':
+        return 'TEMPO ESGOTADO';
+      case 'dead':
+        return 'FIM DE JOGO';
+      default:
+        return 'FIM DE JOGO';
+    }
+  }
 
   String get _statusText {
     switch (stage) {
+      case ResultStage.idle:
+        return 'Toque em COLETAR para validar sua pontuação.';
       case ResultStage.sending:
         return 'Enviando resultado…';
       case ResultStage.validating:
@@ -60,6 +92,7 @@ class ResultOverlay extends StatelessWidget {
       case ResultStage.rejected:
       case ResultStage.sendFailed:
         return AppColors.error;
+      case ResultStage.idle:
       case ResultStage.sending:
       case ResultStage.validating:
         return AppColors.gold;
@@ -70,6 +103,8 @@ class ResultOverlay extends StatelessWidget {
   Widget build(BuildContext context) {
     final bool busy =
         stage == ResultStage.sending || stage == ResultStage.validating;
+    final bool canCollect =
+        stage == ResultStage.idle || stage == ResultStage.sendFailed;
     return Center(
       child: SingleChildScrollView(
         padding: const EdgeInsets.all(24),
@@ -80,7 +115,7 @@ class ResultOverlay extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: <Widget>[
               Text(
-                stage == ResultStage.granted ? 'VITÓRIA!' : 'FIM DE JOGO',
+                _title,
                 textAlign: TextAlign.center,
                 style: AppTheme.neonLabel(fontSize: 22)
                     .copyWith(color: _statusColor, letterSpacing: 4),
@@ -89,6 +124,11 @@ class ResultOverlay extends StatelessWidget {
               _Stat(label: 'SCORE', value: '$score', color: AppColors.cyan),
               _Stat(label: 'ABATES', value: '$kills', color: AppColors.textPrimary),
               _Stat(label: 'ONDAS', value: '$waves', color: AppColors.purple),
+              _Stat(
+                label: 'POWER-UPS',
+                value: '$powerUpsCollected',
+                color: AppColors.gold,
+              ),
               const SizedBox(height: 18),
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -117,8 +157,15 @@ class ResultOverlay extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 20),
-              if (onRetry != null) ...<Widget>[
-                NeonButton(label: 'REENVIAR', onPressed: onRetry),
+              // COLETAR RECOMPENSA: garante o finishSession (retry seguro
+              // idempotente). Depois vira status "Em validação…" → serverResult.
+              if (canCollect && onCollect != null) ...<Widget>[
+                NeonButton(
+                  label: stage == ResultStage.sendFailed
+                      ? 'COLETAR NOVAMENTE'
+                      : 'COLETAR RECOMPENSA',
+                  onPressed: onCollect,
+                ),
                 const SizedBox(height: 10),
               ],
               NeonButton(
