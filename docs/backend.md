@@ -119,3 +119,63 @@ npm test        # precision, blockDistribution, session, purchase
 ```
 
 E2E no Firestore real depende das ações humanas do runbook (§2).
+
+## 6. Apêndice — Correções 5.6 (2026-08-24)
+
+### A. Workflow scheduled vermelho — causa raiz e correção
+
+**Sintoma**: runs `action=run` (manual e scheduled) falhavam com exit 1;
+`closeBlocks` OK, `gameSessions`/`purchaseIntents` com
+`FAILED_PRECONDITION: The query requires an index`.
+
+**Causa raiz**: as queries de batch exigem índices compostos que não
+existiam no projeto (`firestore.indexes.json` vazio):
+
+- `gameSessions`: `status ==` + `processed ==` + `orderBy finishedAt`
+- `purchaseIntents`: `status ==` + `orderBy createdAt`
+
+As runs "verdes" anteriores eram apenas `seed`, que não executa essas
+queries — por isso o problema só apareceu no primeiro `run`.
+
+**Correção**:
+- `backend/src/ensureIndexes.ts`: cria os índices via API Admin do
+  Firestore de forma IDEMPOTENTE (409 ALREADY_EXISTS = ok), aguardando
+  a operação até done (tolera resposta síncrona e 404 em polling).
+  Executado pelo workflow ANTES do runner (passo "Ensure Firestore
+  indexes"), usando o secret existente. Nenhum segredo no log.
+- `firestore.indexes.json`: declara os dois índices compostos.
+- `backend/src/runner.ts`: `serializeForLog` converte BigInt→string
+  (JSON.stringify cru lança TypeError com bigint) e `main()` só roda
+  quando invocado direto (`require.main === module`).
+
+**Tolerância já correta (sem mudança)**: rede vazia/zero elegíveis em
+`distributeBlockReward` finaliza o bloco com distribuição vazia e
+resíduo 100% carregado (testado); config ausente falha seguro com
+`ECONOMY_CONFIG_MISSING` auditável.
+
+### B. Autenticação no dispositivo físico
+
+**Achados**:
+1. `android/app/google-services.json` existe, `project_id =
+   playhash-70742`, package `com.mustarda.playhash` — porém SEM nenhum
+   `oauth_client` registrado (`oauth_client_types=[]`). Isso quebra o
+   Google Sign-In com DEVELOPER_ERROR (ApiException 10).
+2. Mapeamento anterior exibia "Sem conexão" para qualquer erro cujo
+   texto contivesse 'connection'/'socket' — falso negativo de rede.
+
+**Correção**: `lib/core/services/auth_error_messages.dart` mapeia cada
+código para mensagem PT-BR específica; "sem conexão" SOMENTE para
+códigos de rede reais; DEVELOPER_ERROR/operation-not-allowed → mensagem
+clara de configuração. Testes: `test/auth_error_messages_test.dart`.
+
+**SHAs debug do keystore local** (registrar no Firebase Console →
+Project settings → Your apps → Android):
+- SHA-1: `7F:14:73:7E:FF:7F:23:8C:E2:54:E5:5F:10:D7:1D:C5:40:02:27:C2`
+- SHA-256: `8C:6C:1C:17:24:98:70:30:38:6E:28:BD:57:31:B4:BE:EE:21:F5:F3:2C:6A:78:52:96:FA:FD:5F:F7:4F:D5:4B`
+
+Após registrar os SHAs, re-baixar `google-services.json` para
+`android/app/` (deve passar a conter `oauth_client` tipo 1) e rebuild.
+
+**users/{uid}**: `_ensureUserDoc` grava exatamente o whitelist das rules
+(`displayName, email, photoUrl, createdAt, lastLoginAt, status,
+settings, termsAcceptedAt`) — conforme `firestore.rules`.
