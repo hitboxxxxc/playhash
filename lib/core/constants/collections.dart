@@ -29,6 +29,14 @@ abstract final class Collections {
   static const String config = 'config';
   static const String configMachines = 'config/catalog/machines';
 
+  // Intenções de SAQUE (cliente SÓ cria; validação/reserva/payout/estorno
+  // são 100% do runner — doc 05 §26/§51).
+  static const String withdrawalIntents = 'withdrawalIntents';
+
+  // Config pública de saques (config/payouts): ativos habilitados, mínimos
+  // e taxas — somente leitura ("valores definidos pelo servidor").
+  static const String configPayouts = 'config/payouts';
+
   // Configs públicas de bloco e histórico de recompensas — backend AINDA
   // ausente (P4): leitura tolerante a doc ausente/permissão negada; as
   // rules correspondentes serão adicionadas quando o backend existir.

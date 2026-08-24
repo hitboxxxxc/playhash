@@ -150,7 +150,14 @@ export type AuditEventType =
   | 'LEAGUE_PROMOTED'
   | 'LEAGUE_REWARD_GRANTED'
   | 'SEASON_XP_GRANTED'
-  | 'SEASON_REWARD_GRANTED';
+  | 'SEASON_REWARD_GRANTED'
+  // Saques (doc 05 §26/§51) — intents processados pelo runner.
+  | 'WITHDRAWAL_REQUESTED'
+  | 'WITHDRAWAL_RESERVED'
+  | 'WITHDRAWAL_COMPLETED'
+  | 'WITHDRAWAL_FAILED'
+  | 'REWARD_REVERSED'
+  | 'ACCOUNT_ECONOMIC_LOCK';
 
 export interface ProcessingSummary {
   scanned: number;

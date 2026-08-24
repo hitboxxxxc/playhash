@@ -451,6 +451,31 @@ const GAMES: Record<string, Record<string, unknown>> = {
   },
 };
 
+/**
+ * Config de PAGAMENTOS/SAQUES v1 — config/payouts (create-if-absent).
+ * Autoridade do runner (processWithdrawals); cliente lê SOMENTE para exibir
+ * mínimos/taxas (rótulo "valores definidos pelo servidor").
+ *  - assets[]: ativos habilitados p/ saque; unidades em UNITS de coin
+ *    (coinPrecision = 1_000_000 ⇒ minWithdrawUnits 20_000_000 = 20 coins;
+ *    feeUnits 2_000_000 = 2 coins). receivedUnits = amount − fee.
+ *  - antifraude: cooldownHours desde o último saque não-failed, maxPerDay,
+ *    minAccountAgeHours e requireFinishedGames (elegibilidade).
+ */
+const PAYOUTS_V1: Record<string, unknown> = {
+  assets: [
+    { id: 'BTC', network: 'Bitcoin', enabled: true, minWithdrawUnits: 20_000_000, feeUnits: 2_000_000 },
+    { id: 'LTC', network: 'Litecoin', enabled: true, minWithdrawUnits: 20_000_000, feeUnits: 2_000_000 },
+    { id: 'DOGE', network: 'Dogecoin', enabled: true, minWithdrawUnits: 20_000_000, feeUnits: 2_000_000 },
+    { id: 'USDT', network: 'TRC20', enabled: true, minWithdrawUnits: 20_000_000, feeUnits: 2_000_000 },
+  ],
+  cooldownHours: 24,
+  maxPerDay: 3,
+  minAccountAgeHours: 24,
+  requireFinishedGames: 1,
+  coinPrecision: 1_000_000,
+  version: 1,
+};
+
 async function createIfMissing(
   db: ReturnType<typeof initAdmin>['db'],
   docPath: string,
@@ -564,6 +589,7 @@ async function main(): Promise<void> {
   for (const [id, data] of Object.entries(LEAGUES)) {
     console.log(`[seed] leagues/${id}: ${await createIfMissing(db, `leagues/${id}`, data)}`);
   }
+  console.log(`[seed] config/payouts (v1): ${await createIfMissing(db, 'config/payouts', PAYOUTS_V1)}`);
   console.log(`[seed] seasons/season-01: ${await createIfMissing(db, 'seasons/season-01', seasonDoc())}`);
   for (const [id, data] of Object.entries(SEASON_MISSIONS)) {
     console.log(`[seed] missions/${id} (season): ${await createIfMissing(db, `missions/${id}`, data)}`);

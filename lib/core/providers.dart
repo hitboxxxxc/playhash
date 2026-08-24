@@ -20,7 +20,10 @@ import '../data/repositories/missions_repository.dart';
 import '../data/repositories/mining_repository.dart';
 import '../data/repositories/power_repository.dart';
 import '../data/repositories/profile_repository.dart';
+import '../data/models/wallet_model.dart';
+import '../data/repositories/payouts_repository.dart';
 import '../data/repositories/wallet_repository.dart';
+import 'services/withdrawal_service.dart';
 import 'services/auth_service.dart';
 import 'services/claim_service.dart';
 import 'services/cloud_functions_service.dart';
@@ -333,5 +336,73 @@ final StreamProvider<List<MissionView>> seasonMissionsStreamProvider =
     yield* ref.watch(seasonRepositoryProvider).watchSeasonMissions(uid);
   } catch (_) {
     yield const <MissionView>[];
+  }
+});
+
+// ---- CARTEIRA / SAQUES (doc 05 §26/§51) -------------------------------------
+
+/// Repositório de payouts/saques (config/payouts + withdrawals), só leitura.
+final Provider<PayoutsRepositoryApi> payoutsRepositoryProvider =
+    Provider<PayoutsRepositoryApi>((Ref ref) => PayoutsRepository());
+
+/// Serviço de saque (cria withdrawalIntents; observação do resultado).
+final Provider<WithdrawalService> withdrawalServiceProvider =
+    Provider<WithdrawalService>((Ref ref) => WithdrawalService(
+          repository: ref.watch(payoutsRepositoryProvider),
+        ));
+
+/// Config de saques (ativos habilitados, mínimos, taxas) — "valores definidos
+/// pelo servidor". Tolerante: doc ausente/erro ⇒ null (estado vazio).
+final FutureProvider<PayoutsConfigModel?> payoutsConfigProvider =
+    FutureProvider<PayoutsConfigModel?>((Ref ref) async {
+  try {
+    return await ref.watch(payoutsRepositoryProvider).loadConfig();
+  } catch (_) {
+    return null;
+  }
+});
+
+/// Stream da carteira própria (`wallets/{uid}`) em tempo real. Tolerante.
+final StreamProvider<WalletModel?> walletStreamProvider =
+    StreamProvider<WalletModel?>((Ref ref) async* {
+  try {
+    final String? uid = await ref.watch(currentUidProvider.future);
+    if (uid == null) {
+      yield null;
+      return;
+    }
+    yield* ref.watch(walletRepositoryProvider).watchWallet(uid);
+  } catch (_) {
+    yield null;
+  }
+});
+
+/// Histórico de saques do usuário em tempo real. Tolerante a falhas.
+final StreamProvider<List<WithdrawalModel>> withdrawalsStreamProvider =
+    StreamProvider<List<WithdrawalModel>>((Ref ref) async* {
+  try {
+    final String? uid = await ref.watch(currentUidProvider.future);
+    if (uid == null) {
+      yield const <WithdrawalModel>[];
+      return;
+    }
+    yield* ref.watch(payoutsRepositoryProvider).watchUserWithdrawals(uid);
+  } catch (_) {
+    yield const <WithdrawalModel>[];
+  }
+});
+
+/// Espelho de recompensas (`rewards/{uid}/items`) em tempo real. Tolerante.
+final StreamProvider<List<RewardHistoryEntry>> rewardItemsStreamProvider =
+    StreamProvider<List<RewardHistoryEntry>>((Ref ref) async* {
+  try {
+    final String? uid = await ref.watch(currentUidProvider.future);
+    if (uid == null) {
+      yield const <RewardHistoryEntry>[];
+      return;
+    }
+    yield* ref.watch(payoutsRepositoryProvider).watchRewardItems(uid);
+  } catch (_) {
+    yield const <RewardHistoryEntry>[];
   }
 });

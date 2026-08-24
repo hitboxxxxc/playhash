@@ -17,6 +17,7 @@ import { processClaims } from './processors/processClaims';
 import { closeBlocks } from './processors/closeBlocks';
 import { leagueSweep } from './processors/league_sweep';
 import { processSeasonProgress } from './processors/season_progress';
+import { processWithdrawals } from './processors/processWithdrawals';
 import { getEconomyConfig } from './core/config';
 import { toInt } from './core/precision';
 import { writeAudit, auditEventId } from './core/audit';
@@ -148,6 +149,9 @@ async function main(): Promise<void> {
     { name: 'seasonProgress', run: processSeasonProgress },
     { name: 'closeBlocks', run: closeBlocks },
     { name: 'leagueSweep', run: leagueSweep },
+    // Saques por último: payout externo (provider) consome tempo do job e
+    // depende de saldos já consolidados pelos processadores anteriores.
+    { name: 'withdrawals', run: processWithdrawals },
   ];
 
   let failures = 0;

@@ -40,6 +40,8 @@ class ProfileScreen extends ConsumerWidget {
 
   void _openMenuOption(BuildContext context, ProfileMenuOption option) {
     switch (option) {
+      case ProfileMenuOption.wallet:
+        context.push(RoutePaths.wallet);
       case ProfileMenuOption.settings:
         context.push(RoutePaths.settings);
       case ProfileMenuOption.missions:

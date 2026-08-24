@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../theme/app_colors.dart';
 
@@ -17,6 +18,8 @@ class NeonTextField extends StatelessWidget {
     this.onFieldSubmitted,
     this.enabled = true,
     this.autofillHints,
+    this.onChanged,
+    this.inputFormatters,
   });
 
   final TextEditingController? controller;
@@ -29,6 +32,8 @@ class NeonTextField extends StatelessWidget {
   final ValueChanged<String>? onFieldSubmitted;
   final bool enabled;
   final List<String>? autofillHints;
+  final ValueChanged<String>? onChanged;
+  final List<TextInputFormatter>? inputFormatters;
 
   OutlineInputBorder _border(Color color, {double width = 1}) =>
       OutlineInputBorder(
@@ -47,6 +52,8 @@ class NeonTextField extends StatelessWidget {
       onFieldSubmitted: onFieldSubmitted,
       enabled: enabled,
       autofillHints: autofillHints,
+      onChanged: onChanged,
+      inputFormatters: inputFormatters,
       style: const TextStyle(color: AppColors.textPrimary, fontSize: 15),
       decoration: InputDecoration(
         labelText: labelText,

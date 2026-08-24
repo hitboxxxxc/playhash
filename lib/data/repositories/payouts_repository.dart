@@ -1,0 +1,279 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+
+import '../../core/constants/collections.dart';
+
+/// Ativo de saque — espelho SOMENTE-LEITURA de um item de
+/// `config/payouts.assets` ("valores definidos pelo servidor").
+class PayoutAsset {
+  const PayoutAsset({
+    required this.id,
+    required this.network,
+    required this.enabled,
+    required this.minWithdrawUnits,
+    required this.feeUnits,
+  });
+
+  final String id; // BTC | LTC | DOGE | USDT
+  final String network; // Bitcoin | Litecoin | Dogecoin | TRC20
+  final bool enabled;
+
+  /// Mínimo de saque em units (1 coin = 1e6 units).
+  final BigInt minWithdrawUnits;
+
+  /// Taxa do servidor em units (descontada do valor bruto).
+  final BigInt feeUnits;
+
+  static BigInt _toBigInt(Object? value) {
+    if (value is int) return BigInt.from(value);
+    if (value is num) return BigInt.from(value.toInt());
+    if (value is String) return BigInt.tryParse(value) ?? BigInt.zero;
+    return BigInt.zero;
+  }
+
+  factory PayoutAsset.fromMap(Map<String, dynamic> map) => PayoutAsset(
+        id: (map['id'] as String?) ?? '',
+        network: (map['network'] as String?) ?? '',
+        enabled: map['enabled'] == true,
+        minWithdrawUnits: _toBigInt(map['minWithdrawUnits']),
+        feeUnits: _toBigInt(map['feeUnits']),
+      );
+}
+
+/// Config de saques — espelho de `config/payouts`.
+class PayoutsConfigModel {
+  const PayoutsConfigModel({required this.assets});
+
+  /// Apenas os ativos como estão na config (filtrar `enabled` na UI).
+  final List<PayoutAsset> assets;
+
+  factory PayoutsConfigModel.fromMap(Map<String, dynamic> map) =>
+      PayoutsConfigModel(
+        assets: ((map['assets'] as List<dynamic>?) ?? const <dynamic>[])
+            .whereType<Map<String, dynamic>>()
+            .map(PayoutAsset.fromMap)
+            .toList(growable: false),
+      );
+}
+
+/// Espelho SOMENTE-LEITURA de `withdrawals/{id}` (escrito pelo runner).
+/// O endereço completo NUNCA é exibido — apenas [addressMasked].
+class WithdrawalModel {
+  const WithdrawalModel({
+    required this.id,
+    required this.uid,
+    required this.asset,
+    required this.network,
+    required this.amountUnits,
+    required this.feeUnits,
+    required this.receivedUnits,
+    required this.addressMasked,
+    required this.status, // processing | completed | failed
+    this.providerReference,
+    this.errorCode,
+    this.createdAt,
+  });
+
+  final String id;
+  final String uid;
+  final String asset;
+  final String network;
+  final BigInt amountUnits;
+  final BigInt feeUnits;
+  final BigInt receivedUnits;
+  final String addressMasked;
+  final String status;
+  final String? providerReference;
+  final String? errorCode;
+  final DateTime? createdAt;
+
+  bool get isProcessing => status == 'processing';
+  bool get isCompleted => status == 'completed';
+  bool get isFailed => status == 'failed';
+
+  static BigInt _toBigInt(Object? value) {
+    if (value is int) return BigInt.from(value);
+    if (value is num) return BigInt.from(value.toInt());
+    if (value is String) return BigInt.tryParse(value) ?? BigInt.zero;
+    return BigInt.zero;
+  }
+
+  static DateTime? _toDate(Object? value) {
+    if (value is Timestamp) return value.toDate();
+    if (value is DateTime) return value;
+    if (value is int) return DateTime.fromMillisecondsSinceEpoch(value);
+    return null;
+  }
+
+  factory WithdrawalModel.fromMap(String id, Map<String, dynamic> map) =>
+      WithdrawalModel(
+        id: id,
+        uid: (map['uid'] as String?) ?? '',
+        asset: (map['asset'] as String?) ?? '',
+        network: (map['network'] as String?) ?? '',
+        amountUnits: _toBigInt(map['amountUnits']),
+        feeUnits: _toBigInt(map['feeUnits']),
+        receivedUnits: _toBigInt(map['receivedUnits']),
+        addressMasked: (map['addressMasked'] as String?) ?? '',
+        status: (map['status'] as String?) ?? 'processing',
+        providerReference: map['providerReference'] as String?,
+        errorCode: map['errorCode'] as String?,
+        createdAt: _toDate(map['createdAt']),
+      );
+}
+
+/// Contrato do repositório de payouts — permite fakes nos testes.
+abstract interface class PayoutsRepositoryApi {
+  /// Lê `config/payouts` (null se ausente/indisponível).
+  Future<PayoutsConfigModel?> loadConfig();
+
+  /// Cria a intent de saque com EXATAMENTE os campos das rules:
+  /// {uid, asset, network, amountUnits, address, addressMasked,
+  ///  clientRequestId, createdAt, clientVersion}.
+  /// O doc id É o clientRequestId ⇒ retry offline reescreve o MESMO doc.
+  Future<void> createWithdrawalIntent({
+    required String clientRequestId,
+    required String uid,
+    required String asset,
+    required String network,
+    required BigInt amountUnits,
+    required String address,
+    required String addressMasked,
+    required String clientVersion,
+  });
+
+  /// Observa o saque processado pelo runner (`withdrawals/{clientRequestId}`).
+  Stream<WithdrawalModel?> watchWithdrawal(String clientRequestId);
+
+  /// Observa TODOS os saques do usuário (histórico da carteira), mais
+  /// recentes primeiro. Tolerante a falhas ⇒ lista vazia.
+  Stream<List<WithdrawalModel>> watchUserWithdrawals(String uid);
+
+  /// Observa o espelho de recompensas `rewards/{uid}/items` (entradas/saídas
+  /// escritas pelo backend), mais recentes primeiro. Tolerante a falhas.
+  Stream<List<RewardHistoryEntry>> watchRewardItems(String uid);
+}
+
+/// Entrada do espelho de histórico de recompensas (rewards/{uid}/items).
+class RewardHistoryEntry {
+  const RewardHistoryEntry({
+    required this.id,
+    required this.type,
+    required this.amount,
+    required this.currencyId,
+    this.referenceId,
+    this.status,
+    this.createdAt,
+  });
+
+  final String id;
+  final String type;
+  final BigInt amount; // negativo = saída
+  final String currencyId;
+  final String? referenceId;
+  final String? status;
+  final DateTime? createdAt;
+
+  static BigInt _toBigInt(Object? value) {
+    if (value is int) return BigInt.from(value);
+    if (value is num) return BigInt.from(value.toInt());
+    if (value is String) return BigInt.tryParse(value) ?? BigInt.zero;
+    return BigInt.zero;
+  }
+
+  factory RewardHistoryEntry.fromMap(String id, Map<String, dynamic> map) =>
+      RewardHistoryEntry(
+        id: id,
+        type: (map['type'] as String?) ?? '',
+        amount: _toBigInt(map['amount']),
+        currencyId: (map['currencyId'] as String?) ?? 'coins',
+        referenceId: map['referenceId'] as String?,
+        status: map['status'] as String?,
+        createdAt: map['createdAt'] is Timestamp
+            ? (map['createdAt']! as Timestamp).toDate()
+            : null,
+      );
+}
+
+/// Repositório de payouts/saques. O cliente NUNCA calcula taxas nem decide
+/// valores — apenas envia a intenção e observa o resultado do runner.
+class PayoutsRepository implements PayoutsRepositoryApi {
+  PayoutsRepository({FirebaseFirestore? firestore}) : _dbOverride = firestore;
+
+  final FirebaseFirestore? _dbOverride;
+
+  FirebaseFirestore get _db => _dbOverride ?? FirebaseFirestore.instance;
+
+  @override
+  Future<PayoutsConfigModel?> loadConfig() async {
+    try {
+      final DocumentSnapshot<Map<String, dynamic>> snap =
+          await _db.doc(Collections.configPayouts).get();
+      if (!snap.exists) return null;
+      return PayoutsConfigModel.fromMap(snap.data()!);
+    } catch (_) {
+      return null; // tolerante a offline/permissão
+    }
+  }
+
+  @override
+  Future<void> createWithdrawalIntent({
+    required String clientRequestId,
+    required String uid,
+    required String asset,
+    required String network,
+    required BigInt amountUnits,
+    required String address,
+    required String addressMasked,
+    required String clientVersion,
+  }) async {
+    await _db
+        .collection(Collections.withdrawalIntents)
+        .doc(clientRequestId)
+        .set(<String, dynamic>{
+      'uid': uid,
+      'asset': asset,
+      'network': network,
+      'amountUnits': amountUnits.toString(),
+      'address': address,
+      'addressMasked': addressMasked,
+      'clientRequestId': clientRequestId,
+      'createdAt': FieldValue.serverTimestamp(),
+      'clientVersion': clientVersion,
+    });
+  }
+
+  @override
+  Stream<WithdrawalModel?> watchWithdrawal(String clientRequestId) => _db
+          .collection(Collections.withdrawals)
+          .doc(clientRequestId)
+          .snapshots()
+          .map((DocumentSnapshot<Map<String, dynamic>> snap) {
+        if (!snap.exists) return null;
+        return WithdrawalModel.fromMap(snap.id, snap.data()!);
+      });
+
+  @override
+  Stream<List<WithdrawalModel>> watchUserWithdrawals(String uid) => _db
+          .collection(Collections.withdrawals)
+          .where('uid', isEqualTo: uid)
+          .orderBy('createdAt', descending: true)
+          .limit(50)
+          .snapshots()
+          .map((QuerySnapshot<Map<String, dynamic>> snap) => snap.docs
+              .map((QueryDocumentSnapshot<Map<String, dynamic>> d) =>
+                  WithdrawalModel.fromMap(d.id, d.data()))
+              .toList(growable: false))
+          .handleError((_) => const <WithdrawalModel>[]);
+
+  @override
+  Stream<List<RewardHistoryEntry>> watchRewardItems(String uid) => _db
+          .collection('${Collections.rewards}/$uid/items')
+          .orderBy('createdAt', descending: true)
+          .limit(50)
+          .snapshots()
+          .map((QuerySnapshot<Map<String, dynamic>> snap) => snap.docs
+              .map((QueryDocumentSnapshot<Map<String, dynamic>> d) =>
+                  RewardHistoryEntry.fromMap(d.id, d.data()))
+              .toList(growable: false))
+          .handleError((_) => const <RewardHistoryEntry>[]);
+}

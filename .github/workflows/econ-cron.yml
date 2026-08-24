@@ -7,6 +7,15 @@
 #
 # Secret necessário: FIREBASE_SERVICE_ACCOUNT_KEY = conteúdo JSON completo
 # da service account (nunca ecoado no log).
+#
+# PAYOUTS (saques):
+#   - Repo variable PAYOUT_MODE: "test" (padrão; simulação auditada SIM-*)
+#     ou "live" (FaucetPay real). Definir com:
+#       gh variable set PAYOUT_MODE --body test
+#   - MODO LIVE (AÇÃO HUMANA futura — NÃO executar agora):
+#       1. gh secret set FAUCETPAY_API_KEY   # chave da conta FaucetPay
+#       2. gh variable set PAYOUT_MODE --body live
+#     A chave NUNCA vai para o APK/Git — só existe como secret do runner.
 
 name: econ-cron
 
@@ -102,6 +111,12 @@ jobs:
       - name: Run economic runner
         if: github.event_name != 'workflow_dispatch' || inputs.action == 'run'
         working-directory: backend
+        env:
+          # Modo de payout dos saques: repo variable PAYOUT_MODE ("test"|"live").
+          # Ausente/inválida ⇒ runner usa "test" (simulação auditada).
+          PAYOUT_MODE: ${{ vars.PAYOUT_MODE }}
+          # Opcional: exigido SOMENTE quando PAYOUT_MODE=live (FaucetPay real).
+          FAUCETPAY_API_KEY: ${{ secrets.FAUCETPAY_API_KEY }}
         run: node dist/runner.js
 
       - name: Cleanup key file

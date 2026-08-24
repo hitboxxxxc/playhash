@@ -15,6 +15,7 @@ import '../../features/missions/missions_screen.dart';
 import '../../features/mining/mining_screen.dart';
 import '../../features/profile/profile_screen.dart';
 import '../../features/season_pass/season_screen.dart';
+import '../../features/wallet/wallet_screen.dart';
 import '../../features/settings/settings_screen.dart';
 import '../../features/shell/main_shell.dart';
 import '../../features/splash/auth_gate.dart';
@@ -37,6 +38,7 @@ abstract final class RoutePaths {
   static const String profile = '/app/profile';
 
   // Telas empurradas a partir das abas (fora da shell, mas autenticadas).
+  static const String wallet = '/wallet';
   static const String settings = '/app/settings';
   static const String missions = '/app/missions';
   static const String achievements = '/app/achievements';
@@ -90,6 +92,10 @@ GoRouter createAppRouter({AuthServiceApi? auth, String? initialLocation}) {
         builder: (_, GoRouterState state) => ComingSoonScreen(
           title: state.uri.queryParameters['titulo'],
         ),
+      ),
+      GoRoute(
+        path: RoutePaths.wallet,
+        builder: (_, _) => const WalletScreen(),
       ),
       GoRoute(
         path: RoutePaths.settings,
