@@ -215,6 +215,17 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // ---- Histórico de recompensas: espelho escrito SOMENTE pelo backend --
+    // `rewards/{uid}` é doc-agregador; as entradas vivem na SUBCOLEÇÃO items.
+    // Subcoleções exigem match PRÓPRIO (a regra do doc pai NÃO vale para
+    // elas — sem isto o catch-all negava com PERMISSION_DENIED). O runner
+    // grava {type, amount, currencyId, createdAt, referenceId} ao creditar
+    // (GAME_REWARD / REWARD_BLOCK); cliente lê como owner, nunca escreve.
+    match /rewards/{uid}/items/{itemId} {
+      allow read: if isOwner(uid);
+      allow write: if false;
+    }
+
     match /withdrawals/{withdrawalId} {
       allow read: if isSignedIn()
         && resource.data.uid == request.auth.uid;

@@ -121,7 +121,18 @@ async function creditUsers(
       status: 'SUCCESS',
       timestamp: serverTs,
     });
-    ops += 3;
+
+    // Espelho do histórico no app (rewards/{uid}/items/BLOCK_{periodKey}):
+    // leitura owner nas rules; escrita exclusiva do Admin SDK. Id
+    // determinístico ⇒ reexecução do bloco não duplica entrada visível.
+    batch.set(db.doc(`rewards/${uid}/items/BLOCK_${periodKey}`), {
+      type: 'REWARD_BLOCK',
+      amount: reward.toString(),
+      currencyId,
+      createdAt: serverTs,
+      referenceId: periodKey,
+    });
+    ops += 5;
 
     credited += 1;
     if (ops >= 480) await flush(); // limite de 500 ops/batch

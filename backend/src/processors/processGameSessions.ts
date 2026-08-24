@@ -229,6 +229,19 @@ async function handleSession(
       detail: { gameId: typeof data.gameId === 'string' ? data.gameId : '' },
     });
 
+    // Espelho para o histórico do app (rewards/{uid}/items/{sessionId}).
+    // Doc id determinístico (= sessionId) ⇒ idempotente; as rules permitem
+    // apenas READ owner — escrita é exclusiva do Admin SDK.
+    if (created) {
+      await db.doc(`rewards/${uid}/items/${sessionId}`).set({
+        type: 'GAME_REWARD',
+        amount: result.powerAmount.toString(),
+        currencyId: 'power',
+        createdAt: FieldValue.serverTimestamp(),
+        referenceId: sessionId,
+      });
+    }
+
     if (created) await incrementDailyCounter(db, uid, 'sessions', nowMs);
     return 'granted';
   } catch (err) {

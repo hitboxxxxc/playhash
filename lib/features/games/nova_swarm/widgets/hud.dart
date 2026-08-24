@@ -56,11 +56,16 @@ class NovaSwarmHud extends StatelessWidget {
         ),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          // IMPORTANTE: as Columns usam MainAxisSize.min — sem isso cada uma
+          // expande para a ALTURA TOTAL disponível (constraints frouxas do
+          // Align sob StackFit.expand) e o HUD vira um painel INVISÍVEL de
+          // tela inteira que rouba TODOS os toques do playfield.
           child: Row(
             children: <Widget>[
               // SCORE
               Expanded(
                 child: Column(
+                  mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: <Widget>[
                     Text(
@@ -87,6 +92,7 @@ class NovaSwarmHud extends StatelessWidget {
               ),
               // TIMER
               Column(
+                mainAxisSize: MainAxisSize.min,
                 children: <Widget>[
                   Text(
                     'TEMPO',
@@ -120,6 +126,7 @@ class NovaSwarmHud extends StatelessWidget {
               // VIDAS + WAVE
               Expanded(
                 child: Column(
+                  mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: <Widget>[
                     Row(

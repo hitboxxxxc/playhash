@@ -86,10 +86,18 @@ class _NovaSwarmScreenState extends ConsumerState<NovaSwarmScreen>
     }
   }
 
-  void _applyInput(double targetX, bool shooting) {
+  /// Callback do [NovaSwarmInputController]: aplica (alvo, toque ativo) à
+  /// MESMA instância de estado lida pelo Ticker (via ValueNotifier).
+  /// Durante o countdown o loop está congelado, mas o alvo/toque são
+  /// registrados — segurar o dedo através do GO funciona sem re-toque.
+  void _applyInput(double targetX, bool isTouching) {
     final NovaSwarmState? s = _game?.value;
-    if (s == null || s.phase != NovaSwarmPhase.playing) return;
-    _game!.value = s.copyWith(playerTargetX: targetX, shooting: shooting);
+    if (s == null ||
+        s.phase != NovaSwarmPhase.playing ||
+        s.endReason != null) {
+      return;
+    }
+    _game!.value = s.copyWith(playerTargetX: targetX, shooting: isTouching);
   }
 
   // ---- Loop ---------------------------------------------------------------
@@ -196,6 +204,7 @@ class _NovaSwarmScreenState extends ConsumerState<NovaSwarmScreen>
 
   Future<void> _onGameEnd(NovaSwarmState s) async {
     _ticker.stop();
+    _input.release(); // autofire nunca sobrevive ao fim da partida
     if (!mounted) return;
     // v2: NÃO envia automaticamente — o painel final mostra
     // "COLETAR RECOMPENSA", que garante o finishSession (retry idempotente).
@@ -252,6 +261,7 @@ class _NovaSwarmScreenState extends ConsumerState<NovaSwarmScreen>
         s.endReason != null) {
       return;
     }
+    _input.release(); // solta o dedo logicamente (sem autofire zumbi)
     _game!.value = s.copyWith(phase: NovaSwarmPhase.paused, shooting: false);
   }
 
@@ -325,24 +335,43 @@ class _NovaSwarmScreenState extends ConsumerState<NovaSwarmScreen>
           builder: (BuildContext context, NovaSwarmState s, _) => Stack(
             fit: StackFit.expand,
             children: <Widget>[
-              // Campo de jogo: pintor único + input por pan.
-              Listener(
-                behavior: HitTestBehavior.opaque,
-                onPointerDown: (PointerDownEvent e) =>
-                    _input.onPanDown(e.localPosition, size),
-                onPointerMove: (PointerMoveEvent e) =>
-                    _input.onPanUpdate(e.localPosition, size),
-                onPointerUp: (PointerUpEvent e) => _input.onPanEnd(),
-                onPointerCancel: (PointerCancelEvent e) => _input.onPanEnd(),
-                child: CustomPaint(
-                  painter: NovaSwarmPainter(
-                    state: s,
-                    repaint: _game!,
-                  ),
+              // Campo de jogo: pintor único (sem input aqui).
+              CustomPaint(
+                painter: NovaSwarmPainter(
+                  state: s,
+                  repaint: _game!,
+                ),
+                child: const SizedBox.expand(),
+              ),
+              // COUNTDOWN 3-2-1-GO (loop congelado; timer inicia no GO).
+              // IgnorePointer interno: NUNCA absorve toques do playfield.
+              if (!_countdownDone && s.endReason == null)
+                CountdownOverlay(
+                  onFinished: () {
+                    if (!mounted) return;
+                    setState(() => _countdownDone = true);
+                    _lastElapsed = null;
+                  },
+                ),
+              // INPUT em nível de PONTEIRO — camada NO TOPO da stack do
+              // playfield (abaixo apenas de HUD/pausa/resultado). Listener
+              // bruto não entra na arena de gestos: nenhum overlay/scroll
+              // rouba o toque. Multi-touch: só o primeiro dedo comanda.
+              Positioned.fill(
+                child: Listener(
+                  behavior: HitTestBehavior.opaque,
+                  onPointerDown: (PointerDownEvent e) => _input
+                      .onPointerDown(e.pointer, e.localPosition, size),
+                  onPointerMove: (PointerMoveEvent e) => _input
+                      .onPointerMove(e.pointer, e.localPosition, size),
+                  onPointerUp: (PointerUpEvent e) =>
+                      _input.onPointerUp(e.pointer),
+                  onPointerCancel: (PointerCancelEvent e) =>
+                      _input.onPointerCancel(e.pointer),
                   child: const SizedBox.expand(),
                 ),
               ),
-              // HUD topo.
+              // HUD topo (botão de pausa fica ACIMA da camada de input).
               Align(
                 alignment: Alignment.topCenter,
                 child: NovaSwarmHud(
@@ -364,19 +393,12 @@ class _NovaSwarmScreenState extends ConsumerState<NovaSwarmScreen>
                 ),
               ),
               // Pausa (auto-pause por lifecycle também passa aqui — nunca
-              // mais pausa invisível).
+              // mais pausa invisível). Montada SOMENTE quando pausada:
+              // absorve hits apenas enquanto visível.
               if (s.phase == NovaSwarmPhase.paused && s.endReason == null)
                 _PauseOverlay(onResume: _resume, onQuit: _finishAndPop),
-              // COUNTDOWN 3-2-1-GO (loop congelado; timer inicia no GO).
-              if (!_countdownDone && s.endReason == null)
-                CountdownOverlay(
-                  onFinished: () {
-                    if (!mounted) return;
-                    setState(() => _countdownDone = true);
-                    _lastElapsed = null;
-                  },
-                ),
-              // Resultado.
+              // Resultado. Montado SOMENTE no fim: absorve hits apenas
+              // enquanto visível.
               if (_stage == _ScreenStage.finished)
                 ResultOverlay(
                   stage: _resultStage,
