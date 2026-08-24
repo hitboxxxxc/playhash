@@ -1,0 +1,192 @@
+WARNING: A restricted method in java.lang.System has been called
+WARNING: java.lang.System::load has been called by net.rubygrapefruit.platform.internal.NativeLibraryLoader in an unnamed module (file:/C:/Users/Mustarda/.gradle/wrapper/dists/gradle-9.3.1-all/9ot9r568e8zfvvd4mn8rbu1j0/gradle-9.3.1/lib/native-platform-0.22-milestone-29.jar)
+WARNING: Use --enable-native-access=ALL-UNNAMED to avoid a warning for callers in this module
+WARNING: Restricted methods will be blocked in a future release unless native access is enabled
+
+> Task :gradle:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :gradle:compileKotlin UP-TO-DATE
+> Task :gradle:compileJava NO-SOURCE
+> Task :gradle:compileGroovy NO-SOURCE
+> Task :gradle:pluginDescriptors UP-TO-DATE
+> Task :gradle:processResources UP-TO-DATE
+> Task :gradle:classes UP-TO-DATE
+> Task :gradle:jar UP-TO-DATE
+
+> Configure project :app
+WARNING: The option setting 'android.builtInKotlin=false' is deprecated.
+The current default is 'true'.
+It will be removed in version 10.0 of the Android Gradle plugin.
+WARNING: The option setting 'android.newDsl=false' is deprecated.
+The current default is 'true'.
+It will be removed in version 10.0 of the Android Gradle plugin.
+w: Deprecated 'org.jetbrains.kotlin.android' plugin usage
+The 'org.jetbrains.kotlin.android' plugin in project ':app' is no longer required for Kotlin support since AGP 9.0.
+Solution: Remove both `android.builtInKotlin=true` and `android.newDsl=false` from `gradle.properties`, then migrate to built-in Kotlin.
+See https://kotl.in/gradle/agp-built-in-kotlin for more details.
+
+
+> Configure project :cloud_firestore
+w: Deprecated 'org.jetbrains.kotlin.android' plugin usage
+The 'org.jetbrains.kotlin.android' plugin in project ':cloud_firestore' is no longer required for Kotlin support since AGP 9.0.
+Solution: Remove both `android.builtInKotlin=true` and `android.newDsl=false` from `gradle.properties`, then migrate to built-in Kotlin.
+See https://kotl.in/gradle/agp-built-in-kotlin for more details.
+
+
+> Configure project :firebase_auth
+w: Deprecated 'org.jetbrains.kotlin.android' plugin usage
+The 'org.jetbrains.kotlin.android' plugin in project ':firebase_auth' is no longer required for Kotlin support since AGP 9.0.
+Solution: Remove both `android.builtInKotlin=true` and `android.newDsl=false` from `gradle.properties`, then migrate to built-in Kotlin.
+See https://kotl.in/gradle/agp-built-in-kotlin for more details.
+
+
+> Configure project :firebase_core
+w: Deprecated 'org.jetbrains.kotlin.android' plugin usage
+The 'org.jetbrains.kotlin.android' plugin in project ':firebase_core' is no longer required for Kotlin support since AGP 9.0.
+Solution: Remove both `android.builtInKotlin=true` and `android.newDsl=false` from `gradle.properties`, then migrate to built-in Kotlin.
+See https://kotl.in/gradle/agp-built-in-kotlin for more details.
+
+
+> Configure project :google_sign_in_android
+w: Deprecated 'org.jetbrains.kotlin.android' plugin usage
+The 'org.jetbrains.kotlin.android' plugin in project ':google_sign_in_android' is no longer required for Kotlin support since AGP 9.0.
+Solution: Remove both `android.builtInKotlin=true` and `android.newDsl=false` from `gradle.properties`, then migrate to built-in Kotlin.
+See https://kotl.in/gradle/agp-built-in-kotlin for more details.
+
+
+> Configure project :package_info_plus
+w: Deprecated 'org.jetbrains.kotlin.android' plugin usage
+The 'org.jetbrains.kotlin.android' plugin in project ':package_info_plus' is no longer required for Kotlin support since AGP 9.0.
+Solution: Remove both `android.builtInKotlin=true` and `android.newDsl=false` from `gradle.properties`, then migrate to built-in Kotlin.
+See https://kotl.in/gradle/agp-built-in-kotlin for more details.
+
+
+> Configure project :url_launcher_android
+w: Deprecated 'org.jetbrains.kotlin.android' plugin usage
+The 'org.jetbrains.kotlin.android' plugin in project ':url_launcher_android' is no longer required for Kotlin support since AGP 9.0.
+Solution: Remove both `android.builtInKotlin=true` and `android.newDsl=false` from `gradle.properties`, then migrate to built-in Kotlin.
+See https://kotl.in/gradle/agp-built-in-kotlin for more details.
+
+WARNING: Your app uses the following plugins that apply Kotlin Gradle Plugin (KGP): package_info_plus
+Future versions of Flutter will fail to build if your app uses plugins that apply KGP.
+
+Please check the changelogs of these plugins and upgrade to a version that supports Built-in Kotlin.
+If no such version exists, report the issue to the plugin. If necessary, here is a guide on filing
+an issue against a plugin: https://docs.flutter.dev/release/breaking-changes/migrate-to-built-in-kotlin/for-app-developers#report-incompatible-kotlin-gradle-plugin-usage-to-plugin-authors
+
+If you are a plugin author, please migrate your plugin to Built-in Kotlin using this guide: https://docs.flutter.dev/release/breaking-changes/migrate-to-built-in-kotlin/for-plugin-authors
+
+> Task :app:signingReport
+Variant: debug
+Config: debug
+Store: C:\Users\Mustarda\.android\debug.keystore
+Alias: AndroidDebugKey
+MD5: CB:EB:1C:F9:81:CC:85:E5:FD:48:87:EF:74:73:B7:AE
+SHA1: 7F:14:73:7E:FF:7F:23:8C:E2:54:E5:5F:10:D7:1D:C5:40:02:27:C2
+SHA-256: 8C:6C:1C:17:24:98:70:30:38:6E:28:BD:57:31:B4:BE:EE:21:F5:F3:2C:6A:78:52:96:FA:FD:5F:F7:4F:D5:4B
+Valid until: segunda-feira, 3 de julho de 2056
+----------
+Variant: release
+Config: debug
+Store: C:\Users\Mustarda\.android\debug.keystore
+Alias: AndroidDebugKey
+MD5: CB:EB:1C:F9:81:CC:85:E5:FD:48:87:EF:74:73:B7:AE
+SHA1: 7F:14:73:7E:FF:7F:23:8C:E2:54:E5:5F:10:D7:1D:C5:40:02:27:C2
+SHA-256: 8C:6C:1C:17:24:98:70:30:38:6E:28:BD:57:31:B4:BE:EE:21:F5:F3:2C:6A:78:52:96:FA:FD:5F:F7:4F:D5:4B
+Valid until: segunda-feira, 3 de julho de 2056
+----------
+Variant: profile
+Config: debug
+Store: C:\Users\Mustarda\.android\debug.keystore
+Alias: AndroidDebugKey
+MD5: CB:EB:1C:F9:81:CC:85:E5:FD:48:87:EF:74:73:B7:AE
+SHA1: 7F:14:73:7E:FF:7F:23:8C:E2:54:E5:5F:10:D7:1D:C5:40:02:27:C2
+SHA-256: 8C:6C:1C:17:24:98:70:30:38:6E:28:BD:57:31:B4:BE:EE:21:F5:F3:2C:6A:78:52:96:FA:FD:5F:F7:4F:D5:4B
+Valid until: segunda-feira, 3 de julho de 2056
+----------
+Variant: debugAndroidTest
+Config: debug
+Store: C:\Users\Mustarda\.android\debug.keystore
+Alias: AndroidDebugKey
+MD5: CB:EB:1C:F9:81:CC:85:E5:FD:48:87:EF:74:73:B7:AE
+SHA1: 7F:14:73:7E:FF:7F:23:8C:E2:54:E5:5F:10:D7:1D:C5:40:02:27:C2
+SHA-256: 8C:6C:1C:17:24:98:70:30:38:6E:28:BD:57:31:B4:BE:EE:21:F5:F3:2C:6A:78:52:96:FA:FD:5F:F7:4F:D5:4B
+Valid until: segunda-feira, 3 de julho de 2056
+----------
+
+> Task :cloud_firestore:signingReport
+Variant: debugAndroidTest
+Config: debug
+Store: C:\Users\Mustarda\.android\debug.keystore
+Alias: AndroidDebugKey
+MD5: CB:EB:1C:F9:81:CC:85:E5:FD:48:87:EF:74:73:B7:AE
+SHA1: 7F:14:73:7E:FF:7F:23:8C:E2:54:E5:5F:10:D7:1D:C5:40:02:27:C2
+SHA-256: 8C:6C:1C:17:24:98:70:30:38:6E:28:BD:57:31:B4:BE:EE:21:F5:F3:2C:6A:78:52:96:FA:FD:5F:F7:4F:D5:4B
+Valid until: segunda-feira, 3 de julho de 2056
+----------
+
+> Task :firebase_auth:signingReport
+Variant: debugAndroidTest
+Config: debug
+Store: C:\Users\Mustarda\.android\debug.keystore
+Alias: AndroidDebugKey
+MD5: CB:EB:1C:F9:81:CC:85:E5:FD:48:87:EF:74:73:B7:AE
+SHA1: 7F:14:73:7E:FF:7F:23:8C:E2:54:E5:5F:10:D7:1D:C5:40:02:27:C2
+SHA-256: 8C:6C:1C:17:24:98:70:30:38:6E:28:BD:57:31:B4:BE:EE:21:F5:F3:2C:6A:78:52:96:FA:FD:5F:F7:4F:D5:4B
+Valid until: segunda-feira, 3 de julho de 2056
+----------
+
+> Task :firebase_core:signingReport
+Variant: debugAndroidTest
+Config: debug
+Store: C:\Users\Mustarda\.android\debug.keystore
+Alias: AndroidDebugKey
+MD5: CB:EB:1C:F9:81:CC:85:E5:FD:48:87:EF:74:73:B7:AE
+SHA1: 7F:14:73:7E:FF:7F:23:8C:E2:54:E5:5F:10:D7:1D:C5:40:02:27:C2
+SHA-256: 8C:6C:1C:17:24:98:70:30:38:6E:28:BD:57:31:B4:BE:EE:21:F5:F3:2C:6A:78:52:96:FA:FD:5F:F7:4F:D5:4B
+Valid until: segunda-feira, 3 de julho de 2056
+----------
+
+> Task :google_sign_in_android:signingReport
+Variant: debugAndroidTest
+Config: debug
+Store: C:\Users\Mustarda\.android\debug.keystore
+Alias: AndroidDebugKey
+MD5: CB:EB:1C:F9:81:CC:85:E5:FD:48:87:EF:74:73:B7:AE
+SHA1: 7F:14:73:7E:FF:7F:23:8C:E2:54:E5:5F:10:D7:1D:C5:40:02:27:C2
+SHA-256: 8C:6C:1C:17:24:98:70:30:38:6E:28:BD:57:31:B4:BE:EE:21:F5:F3:2C:6A:78:52:96:FA:FD:5F:F7:4F:D5:4B
+Valid until: segunda-feira, 3 de julho de 2056
+----------
+
+> Task :package_info_plus:signingReport
+Variant: debugAndroidTest
+Config: debug
+Store: C:\Users\Mustarda\.android\debug.keystore
+Alias: AndroidDebugKey
+MD5: CB:EB:1C:F9:81:CC:85:E5:FD:48:87:EF:74:73:B7:AE
+SHA1: 7F:14:73:7E:FF:7F:23:8C:E2:54:E5:5F:10:D7:1D:C5:40:02:27:C2
+SHA-256: 8C:6C:1C:17:24:98:70:30:38:6E:28:BD:57:31:B4:BE:EE:21:F5:F3:2C:6A:78:52:96:FA:FD:5F:F7:4F:D5:4B
+Valid until: segunda-feira, 3 de julho de 2056
+----------
+
+> Task :url_launcher_android:signingReport
+Variant: debugAndroidTest
+Config: debug
+Store: C:\Users\Mustarda\.android\debug.keystore
+Alias: AndroidDebugKey
+MD5: CB:EB:1C:F9:81:CC:85:E5:FD:48:87:EF:74:73:B7:AE
+SHA1: 7F:14:73:7E:FF:7F:23:8C:E2:54:E5:5F:10:D7:1D:C5:40:02:27:C2
+SHA-256: 8C:6C:1C:17:24:98:70:30:38:6E:28:BD:57:31:B4:BE:EE:21:F5:F3:2C:6A:78:52:96:FA:FD:5F:F7:4F:D5:4B
+Valid until: segunda-feira, 3 de julho de 2056
+----------
+
+[Incubating] Problems report is available at: file:///H:/PlayHash/build/reports/problems/problems-report.html
+
+Deprecated Gradle features were used in this build, making it incompatible with Gradle 10.
+
+You can use '--warning-mode all' to show the individual deprecation warnings and determine if they come from your own scripts or plugins.
+
+For more on this, please refer to https://docs.gradle.org/9.3.1/userguide/command_line_interface.html#sec:command_line_warnings in the Gradle documentation.
+
+BUILD SUCCESSFUL in 5s
+11 actionable tasks: 7 executed, 4 up-to-date
+Consider enabling configuration cache to speed up this build: https://docs.gradle.org/9.3.1/userguide/configuration_cache_enabling.html

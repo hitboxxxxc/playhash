@@ -95,23 +95,30 @@ export async function ensureIndex(
     );
   }
 
-  // Operação assíncrona → aguarda até READY/done.
-  const op = (await res.json()) as { name?: string; done?: boolean };
+  // A resposta pode ser uma Operation assíncrona (name com /operations/)
+  // ou o próprio recurso Index criado sincronamente (name com /indexes/).
+  let operation = (await res.json()) as { name?: string; done?: boolean };
+  const isOperation =
+    typeof operation.name === 'string' &&
+    operation.name.includes('/operations/');
   const deadline = Date.now() + CREATE_TIMEOUT_MS;
-  let operation = op;
-  while (!operation.done && Date.now() < deadline) {
+  while (isOperation && !operation.done && Date.now() < deadline) {
     await sleep(POLL_INTERVAL_MS);
     const opRes = await fetch(`${BASE}/${operation.name}`, {
       headers: { Authorization: authHeader },
     });
+    if (opRes.status === 404) {
+      // Operação concluída e removida (build rápido) → índice existe.
+      break;
+    }
     if (!opRes.ok) {
       throw new Error(
         `ENSURE_INDEXES_POLL_FAILED:${spec.collectionGroup}:${opRes.status}`,
       );
     }
-    operation = (await opRes.json()) as typeof op;
+    operation = (await opRes.json()) as typeof operation;
   }
-  if (!operation.done) {
+  if (isOperation && !operation.done && Date.now() >= deadline) {
     throw new Error(`ENSURE_INDEXES_TIMEOUT:${spec.collectionGroup}`);
   }
 
