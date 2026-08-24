@@ -54,3 +54,4 @@ node_modules/
 android/app/google-services.json
 *.jks
 key.properties
+signing_report.txt  
