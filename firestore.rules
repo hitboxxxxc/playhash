@@ -265,8 +265,10 @@ service cloud.firestore {
         && request.resource.data.destinationEmail is string
         && request.resource.data.destinationEmail.size() >= 6
         && request.resource.data.destinationEmail.size() <= 254
+        // Regex SEM barras invertidas (compatível com o parser das rules):
+        // local@domínio.tld(≥2), sem espaços; ponto escrito como [.].
         && request.resource.data.destinationEmail.matches(
-             r'^[^@\s]+@[^@\s]+\.[^@\s]{2,}$')
+             '^[^@[:space:]]+@[^@[:space:]]+[.][^@[:space:]]{2,}$')
         && request.resource.data.destinationMasked is string
         && request.resource.data.destinationMasked.size() > 0
         && request.resource.data.destinationMasked.size() <= 64
