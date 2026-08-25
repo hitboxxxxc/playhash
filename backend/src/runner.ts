@@ -474,6 +474,161 @@ export async function runPayoutLiveTest(
   }
 }
 
+/**
+ * livePayoutDirect (12.13) — PROVA 1 do provedor, INDEPENDENTE do app/rules.
+ * Exige PAYOUT_MODE=live + input explícito `email` (dono) e `asset=LTC`.
+ * Fluxo:
+ *   1. Consulta mínimo/taxa do ENVIO INTERNO no provider (/fees; best-effort);
+ *   2. Envia UM micro-pagamento = mínimo do provedor para o E-MAIL do dono
+ *      (transferência interna FaucetPay — nunca endereço externo);
+ *   3. Imprime status + providerReference MASCARADO e GRAVA
+ *      providerMinLitoshi + taxa em config/payouts v4 (merge seguro);
+ *   4. Falha do provedor (chave inválida, saldo insuficiente, e-mail
+ *      inexistente) ⇒ código seguro no log, SEM crash.
+ * O e-mail é usado SOMENTE no corpo da requisição — jamais em logs.
+ */
+export interface LivePayoutDirectOptions {
+  payoutMode: string;
+  asset: string;
+  /** E-mail FaucetPay DO DONO (input do workflow; nunca logado). */
+  email: string;
+}
+
+export async function runLivePayoutDirect(
+  db: Firestore,
+  opts: LivePayoutDirectOptions,
+): Promise<{
+  executed: boolean;
+  status?: 'completed' | 'failed';
+  providerReference?: string;
+  providerMinLitoshi?: number;
+}> {
+  const mode = opts.payoutMode.trim().toLowerCase();
+  if (mode !== 'live') {
+    console.log(
+      `[runner] livePayoutDirect SKIP: requer repo variable PAYOUT_MODE=live (atual='${mode || 'test'}'). Nada foi enviado.`,
+    );
+    return { executed: false };
+  }
+  const asset = opts.asset.trim().toUpperCase();
+  const email = opts.email.trim();
+  // Validação local mínima de formato — o e-mail NUNCA é ecoado no erro.
+  if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+    console.error('[runner] livePayoutDirect FAILED=INVALID_EMAIL_INPUT');
+    return { executed: false };
+  }
+
+  let provider: FaucetPayProvider;
+  try {
+    provider = new FaucetPayProvider();
+  } catch (err) {
+    console.error(`[runner] livePayoutDirect FAILED=${sanitize(err)}`);
+    return { executed: true, status: 'failed' };
+  }
+
+  const payouts = await getPayoutsConfig(db);
+  const cfg: PayoutAssetConfig | undefined = payouts.getAsset(asset);
+
+  // ---- 1) Mínimo/taxa do envio interno (best-effort) ---------------------
+  let apiMin: number | undefined;
+  let feeUnits: bigint | undefined;
+  try {
+    const fees = await provider.getFees();
+    if (fees.ok) {
+      const f = fees.data.find((x) => String(x.asset ?? '').trim().toUpperCase() === asset);
+      if (f?.minUnits !== undefined) apiMin = Number(f.minUnits);
+      feeUnits = f?.feeUnits;
+      console.log(
+        `[runner] livePayoutDirect fees asset=${asset}` +
+          ` minUnits=${apiMin ?? '<nao_exposto>'} feeUnits=${feeUnits?.toString() ?? '<indisponivel>'}`,
+      );
+    } else {
+      console.log(`[runner] livePayoutDirect fees UNAVAILABLE=${fees.errorCode}`);
+    }
+  } catch (err) {
+    console.log(`[runner] livePayoutDirect fees UNAVAILABLE=${sanitize(err)}`);
+  }
+  const cfgMinRaw = cfg?.providerMinLitoshi;
+  const cfgMin = typeof cfgMinRaw === 'bigint' && cfgMinRaw > 0n ? Number(cfgMinRaw) : null;
+  const minLitoshi = apiMin ?? (cfgMin !== null ? cfgMin : FALLBACK_PROVIDER_MIN_LITOSHI);
+
+  // ---- 2) UM micro-pagamento real = mínimo do provedor -------------------
+  const referenceId = `livedirect-${Date.now()}`;
+  let result;
+  try {
+    result = await provider.sendToUser({
+      asset,
+      amountLitoshi: BigInt(minLitoshi),
+      email,
+    });
+  } catch (err) {
+    console.error(`[runner] livePayoutDirect FAILED=${sanitize(err)}`);
+    result = { status: 'failed' as const, errorCode: 'PROVIDER_ERROR' };
+  }
+
+  // Auditoria determinística (sem e-mail; apenas máscara/código seguro).
+  try {
+    await writeAudit(db, {
+      eventId: auditEventId('WITHDRAWAL_TEST', referenceId),
+      userId: 'owner',
+      type: 'WITHDRAWAL_TEST',
+      referenceId,
+      origin: 'runner.livePayoutDirect',
+      ruleVersion: payouts.version,
+      status: result.status === 'completed' ? 'SUCCESS' : 'FAILED',
+      detail: {
+        asset,
+        amountLitoshi: minLitoshi.toString(),
+        errorCode: result.errorCode,
+        providerReference: result.providerReference,
+        destinationMasked: `${email.slice(0, 2)}***@${email.slice(email.indexOf('@') + 1)}`,
+        payoutSimulated: false,
+      },
+    });
+  } catch (err) {
+    console.error(`[runner] livePayoutDirect AUDIT FAILED=${sanitize(err)}`);
+  }
+
+  // ---- 3) Persiste providerMinLitoshi + taxa em config/payouts v4 --------
+  const candidate = Math.max(minLitoshi, FALLBACK_PROVIDER_MIN_LITOSHI);
+  try {
+    const ref = db.doc('config/payouts');
+    const snap = await ref.get();
+    const merged = {
+      ...applyProbeMinimum(snap.data() ?? null, candidate),
+      // Taxa observada do envio interno (doc-level; ignorada pelo normalizador).
+      providerFeeLitoshiLastSeen: feeUnits !== undefined ? Number(feeUnits) : null,
+    };
+    await ref.set(merged, { merge: true });
+    console.log(
+      `[runner] livePayoutDirect WRITE OK providerMinLitoshi=${candidate} source=${apiMin !== undefined ? 'api' : 'fallback_plataforma'}` +
+        ` feeUnits=${feeUnits?.toString() ?? '<indisponivel>'} (config/payouts v4)`,
+    );
+  } catch (err) {
+    console.error(`[runner] livePayoutDirect PERSIST FAILED=${sanitize(err)}`);
+  }
+
+  // ---- 4) Resultado seguro (sem crash; sem dados sensíveis) --------------
+  if (result.status === 'completed') {
+    const rawRef = String(result.providerReference ?? '');
+    const maskedRef =
+      rawRef.length <= 4 ? '*'.repeat(rawRef.length) : `${rawRef.slice(0, 3)}***${rawRef.slice(-1)}`;
+    console.log(
+      `[runner] livePayoutDirect completed ref=<masked:${maskedRef}> amountLitoshi=${minLitoshi}`,
+    );
+    return {
+      executed: true,
+      status: 'completed',
+      providerReference: rawRef,
+      providerMinLitoshi: candidate,
+    };
+  }
+  console.error(
+    `[runner] livePayoutDirect failed code=${result.errorCode ?? 'PROVIDER_ERROR'} (nenhum dado sensível no log)`,
+  );
+  return { executed: true, status: 'failed', providerMinLitoshi: candidate };
+}
+
 /** Máscara local de e-mail p/ logs do devDiag (nunca imprime o valor cheio). */
 function maskEmailLog(email: unknown): string {
   if (typeof email !== 'string' || email.indexOf('@') <= 0) return '<masked>';
@@ -637,6 +792,23 @@ async function main(): Promise<void> {
       console.error(`[runner] devDiag FAILED=${sanitize(err)}`);
       process.exitCode = 1;
     }
+    return;
+  }
+
+  if (action === 'livePayoutDirect') {
+    try {
+      await runLivePayoutDirect(db, {
+        payoutMode: String(process.env.PAYOUT_MODE ?? 'test'),
+        asset: String(process.env.PAYOUT_DIRECT_ASSET ?? 'LTC').trim().toUpperCase(),
+        email: String(process.env.PAYOUT_DIRECT_EMAIL ?? '').trim(),
+      });
+      // Falha do provedor NÃO derruba o job (código seguro; auditoria registra).
+      process.exitCode = 0;
+    } catch (err) {
+      console.error(`[runner] livePayoutDirect FAILED=${sanitize(err)}`);
+      process.exitCode = 1;
+    }
+    console.log(`[runner] done in ${Date.now() - startedAt}ms`);
     return;
   }
 

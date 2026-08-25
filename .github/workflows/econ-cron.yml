@@ -25,7 +25,7 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: 'run = economic runner | seed = dev seed | devTopUp = crédito de dev (ENV=dev) | rulesProbe = verificação das rules (ENV=dev) | payoutProbe = leitura FaucetPay + grava providerMinLitoshi (ENV=dev) | payoutLiveTest = micro-payout REAL (PAYOUT_MODE=live + inputs)'
+        description: 'run = economic runner | seed = dev seed | devTopUp = crédito de dev (ENV=dev) | rulesProbe = verificação das rules (ENV=dev) | payoutProbe = leitura FaucetPay + grava providerMinLitoshi (ENV=dev) | payoutLiveTest = micro-payout REAL por endereço (PAYOUT_MODE=live + inputs) | livePayoutDirect = micro-payout REAL por E-MAIL do dono (PAYOUT_MODE=live; PROVA 1 do provedor)'
         type: choice
         options:
           - run
@@ -34,6 +34,7 @@ on:
           - rulesProbe
           - payoutProbe
           - payoutLiveTest
+          - livePayoutDirect
           - devDiag
         default: run
         required: true
@@ -59,6 +60,11 @@ on:
         default: ''
       payoutAmount:
         description: 'payoutLiveTest: valor decimal no ativo (vazio = providerMin da config/payouts v2)'
+        type: string
+        required: false
+        default: ''
+      payoutEmail:
+        description: 'livePayoutDirect: e-mail FaucetPay DO DONO que receberá o micro-payout (nunca logado)'
         type: string
         required: false
         default: ''
@@ -174,6 +180,22 @@ jobs:
           PAYOUT_TEST_ASSET: ${{ inputs.payoutAsset }}
           PAYOUT_TEST_ADDRESS: ${{ inputs.payoutAddress }}
           PAYOUT_TEST_AMOUNT: ${{ inputs.payoutAmount }}
+        run: node dist/runner.js
+
+      # livePayoutDirect (12.13): MICRO-PAYOUT REAL POR E-MAIL (PROVA 1).
+      # GATE duplo no runner: exige repo variable PAYOUT_MODE=live E input
+      # `payoutEmail` válido. Envia UM pagamento = mínimo do provedor para o
+      # e-mail do DONO (transferência interna); grava providerMinLitoshi+taxa
+      # em config/payouts v4. Falha ⇒ código seguro, sem crash.
+      - name: Payout live direct (email, PAYOUT_MODE=live only)
+        if: github.event_name == 'workflow_dispatch' && inputs.action == 'livePayoutDirect'
+        working-directory: backend
+        env:
+          RUNNER_ACTION: livePayoutDirect
+          PAYOUT_MODE: ${{ vars.PAYOUT_MODE }}
+          FAUCETPAY_API_KEY: ${{ secrets.FAUCETPAY_API_KEY }}
+          PAYOUT_DIRECT_ASSET: 'LTC'
+          PAYOUT_DIRECT_EMAIL: ${{ inputs.payoutEmail }}
         run: node dist/runner.js
 
       # devTopUp: crédito de saldo de desenvolvimento. GATE no runner:
