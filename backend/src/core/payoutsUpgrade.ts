@@ -107,6 +107,174 @@ export function applyPayoutsAssetV3(
   }));
 }
 
+// ---------------------------------------------------------------------------
+// SCHEMA CANÔNICO v4 (12.9) — assets como MAPA keyed por id UPPERCASE.
+// Aceita QUALQUER legado (v1 array, v2/v3 array com campos antigos,
+// ids em qualquer caixa) e produz a forma canônica idempotente.
+// ---------------------------------------------------------------------------
+
+/** Ativo canônico v4 (forma EXATA gravada/lida do Firestore). */
+export interface PayoutAssetV4 {
+  enabled: boolean;
+  litoshiPerCoin: number;
+  minWithdrawCoins: number;
+  feeCoins: number;
+  /** Mínimo REAL do provedor em litoshi; null até o probe confirmar. */
+  providerMinLitoshi: number | null;
+  displayRate: string;
+  destinationType: 'faucetpay_email';
+}
+
+export const PAYOUTS_V4_META: Record<string, unknown> = {
+  destinationType: 'faucetpay_email',
+  futureRateSource: 'usd_auto', // documental — sem feed implementado
+};
+
+/** Destino canônico v4 — LTC único habilitado (taxa fixa 100 litoshi/coin). */
+export const PAYOUTS_ASSET_V4: Record<string, PayoutAssetV4> = {
+  LTC: {
+    enabled: true,
+    litoshiPerCoin: 100,
+    minWithdrawCoins: 20,
+    feeCoins: 2,
+    providerMinLitoshi: null,
+    displayRate: '1 COIN = 0,000001 LTC',
+    destinationType: 'faucetpay_email',
+  },
+  BTC: {
+    enabled: false,
+    litoshiPerCoin: 0,
+    minWithdrawCoins: 0,
+    feeCoins: 0,
+    providerMinLitoshi: null,
+    displayRate: '',
+    destinationType: 'faucetpay_email',
+  },
+  DOGE: {
+    enabled: false,
+    litoshiPerCoin: 0,
+    minWithdrawCoins: 0,
+    feeCoins: 0,
+    providerMinLitoshi: null,
+    displayRate: '',
+    destinationType: 'faucetpay_email',
+  },
+  USDT: {
+    enabled: false,
+    litoshiPerCoin: 0,
+    minWithdrawCoins: 0,
+    feeCoins: 0,
+    providerMinLitoshi: null,
+    displayRate: '',
+    destinationType: 'faucetpay_email',
+  },
+};
+
+function toInt(v: unknown): number {
+  const n = typeof v === 'string' ? Number(v) : typeof v === 'number' ? v : NaN;
+  return Number.isFinite(n) ? Math.trunc(n) : 0;
+}
+
+/**
+ * Normalizador IDEMPOTENTE: aceita QUALQUER legado e devolve a forma v4.
+ *  - assets como ARRAY (v1–v3) ou MAPA/OBJETO (v4);
+ *  - ids em qualquer caixa/com espaços ⇒ UPPERCASE trim;
+ *  - aliases de campo: assetUnitPerCoinScaled→litoshiPerCoin,
+ *    minWithdrawUnits→minWithdrawCoins (÷1e6), feeUnits→feeCoins (÷1e6);
+ *  - doc ausente/corrompido ⇒ defaults canônicos (LTC habilitado).
+ */
+export function normalizePayoutsDoc(
+  raw: Record<string, unknown> | null | undefined,
+): {
+  version: number;
+  cooldownHours: number;
+  maxPerDay: number;
+  minAccountAgeHours: number;
+  requireFinishedGames: number;
+  coinPrecision: number;
+  assets: Record<string, PayoutAssetV4>;
+} {
+  const data = raw ?? {};
+  const rawAssets: unknown = data.assets;
+  const entries: [string, Record<string, unknown>][] = [];
+  if (Array.isArray(rawAssets)) {
+    for (const item of rawAssets as Record<string, unknown>[]) {
+      if (item && typeof item === 'object' && typeof item.id === 'string') {
+        entries.push([item.id.trim().toUpperCase(), item]);
+      }
+    }
+  } else if (rawAssets && typeof rawAssets === 'object') {
+    for (const [key, value] of Object.entries(rawAssets as Record<string, unknown>)) {
+      if (value && typeof value === 'object') {
+        entries.push([key.trim().toUpperCase(), value as Record<string, unknown>]);
+      }
+    }
+  }
+
+  const assets: Record<string, PayoutAssetV4> = {};
+  for (const [id, a] of entries) {
+    const canonical = PAYOUTS_ASSET_V4[id];
+    const enabled = a.enabled === true;
+    const litoshiPerCoin = toInt(a.litoshiPerCoin ?? a.assetUnitPerCoinScaled ?? 0);
+    const minWithdrawCoins = toInt(a.minWithdrawCoins ?? Math.floor(toInt(a.minWithdrawUnits ?? 0) / 1_000_000));
+    const feeCoins = toInt(a.feeCoins ?? Math.floor(toInt(a.feeUnits ?? 0) / 1_000_000));
+    const rawMin = a.providerMinLitoshi;
+    assets[id] = {
+      enabled,
+      // Ativo desabilitado sem números ⇒ herda o canônico (zeros); habilitado
+      // sem conversão definida ⇒ mantém o que veio (processador recusa se 0).
+      litoshiPerCoin: litoshiPerCoin || canonical?.litoshiPerCoin || 0,
+      minWithdrawCoins:
+        minWithdrawCoins || (enabled ? canonical?.minWithdrawCoins ?? 0 : 0),
+      feeCoins: feeCoins || (enabled ? canonical?.feeCoins ?? 0 : 0),
+      providerMinLitoshi:
+        rawMin === null || rawMin === undefined
+          ? null
+          : toInt(rawMin),
+      displayRate:
+        typeof a.displayRate === 'string'
+          ? a.displayRate
+          : canonical?.displayRate ?? '',
+      destinationType: 'faucetpay_email',
+    };
+  }
+  // Garantia de COMPLETUDE canônica: todo id canônico ausente no legado é
+  // adicionado com o default v4 (auto-heal; idempotente).
+  for (const [id, a] of Object.entries(PAYOUTS_ASSET_V4)) {
+    if (!assets[id]) assets[id] = { ...a };
+  }
+
+  return {
+    version: toInt(data.version ?? 1) || 1,
+    cooldownHours: toInt(data.cooldownHours ?? 24) || 24,
+    maxPerDay: toInt(data.maxPerDay ?? 3) || 3,
+    minAccountAgeHours: toInt(data.minAccountAgeHours ?? 24) || 24,
+    requireFinishedGames: toInt(data.requireFinishedGames ?? 1),
+    coinPrecision: toInt(data.coinPrecision ?? 1_000_000) || 1_000_000,
+    assets,
+  };
+}
+
+/**
+ * Doc canônico v4 a partir de QUALQUER estado (null = doc ausente).
+ * Escalares antifraude preservados do raw quando presentes.
+ */
+export function buildPayoutsV4Doc(
+  raw: Record<string, unknown> | null | undefined,
+): Record<string, unknown> {
+  const n = normalizePayoutsDoc(raw);
+  return {
+    ...PAYOUTS_V4_META,
+    cooldownHours: n.cooldownHours,
+    maxPerDay: n.maxPerDay,
+    minAccountAgeHours: n.minAccountAgeHours,
+    requireFinishedGames: n.requireFinishedGames,
+    coinPrecision: n.coinPrecision,
+    assets: n.assets,
+    version: 4,
+  };
+}
+
 /**
  * Payload FINAL v3 a partir de QUALQUER estado anterior:
  *  - existing == null (doc ausente) ⇒ base v1 + v2 + v3, version=3;

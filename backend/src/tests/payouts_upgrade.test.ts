@@ -8,6 +8,8 @@ import {
   PAYOUTS_V1,
   applyPayoutsAssetV3,
   buildPayoutsV3Doc,
+  buildPayoutsV4Doc,
+  normalizePayoutsDoc,
 } from '../core/payoutsUpgrade';
 
 function assetById(
@@ -122,5 +124,86 @@ describe('idempotência do upgrade', () => {
     ]);
     expect(out[0]).toEqual({ id: 'SOL', enabled: true });
     expect(out[1]).toEqual({ enabled: true });
+  });
+});
+
+describe('SCHEMA CANÔNICO v4 (12.9): normalização de legado', () => {
+  it('doc AUSENTE ⇒ defaults canônicos (LTC habilitado, taxa fixa)', () => {
+    const n = normalizePayoutsDoc(null);
+    expect(n.version).toBe(1);
+    expect(n.assets.LTC).toBeDefined();
+    expect(n.assets.LTC!.enabled).toBe(true);
+    expect(n.assets.LTC!.litoshiPerCoin).toBe(100);
+    expect(n.assets.LTC!.minWithdrawCoins).toBe(20);
+    expect(n.assets.LTC!.feeCoins).toBe(2);
+    expect(n.assets.LTC!.providerMinLitoshi).toBeNull();
+    expect(n.assets.BTC!.enabled).toBe(false);
+  });
+
+  it('legado ARRAY com ids lower/upper e campos antigos ⇒ mapa UPPER canônico', () => {
+    const legacy = {
+      version: 3,
+      cooldownHours: 24,
+      assets: [
+        {
+          id: 'ltc',
+          network: 'FaucetPayEmail',
+          enabled: true,
+          // Campos ANTIGOS (v2) em vez dos v4:
+          assetUnitPerCoinScaled: 100, // alias de litoshiPerCoin
+          minWithdrawUnits: 20_000_000, // 20 coins (÷1e6)
+          feeUnits: 2_000_000, // 2 coins
+          providerMinLitoshi: null,
+        },
+        { id: 'BTC', enabled: false },
+      ],
+    };
+    const n = normalizePayoutsDoc(legacy as Record<string, unknown>);
+    // LTC/BTC do legado + completude canônica (DOGE/USDT adicionados):
+    expect(Object.keys(n.assets)).toEqual(['LTC', 'BTC', 'DOGE', 'USDT']);
+    expect(n.assets.LTC!.litoshiPerCoin).toBe(100);
+    expect(n.assets.LTC!.minWithdrawCoins).toBe(20);
+    expect(n.assets.LTC!.feeCoins).toBe(2);
+    expect(n.assets.BTC!.enabled).toBe(false);
+  });
+
+  it('v4 MAPA keyed por id passa direto (idempotente)', () => {
+    const doc = buildPayoutsV4Doc(null);
+    const again = normalizePayoutsDoc(doc);
+    expect(again.version).toBe(4);
+    expect(again.assets).toEqual(doc.assets);
+    // buildPayoutsV4Doc(normalize(build)) == build — idempotência total:
+    expect(buildPayoutsV4Doc(doc)).toEqual(doc);
+  });
+
+  it('escalares antifraude do legado são preservados no doc v4', () => {
+    const doc = buildPayoutsV4Doc({
+      ...PAYOUTS_V1,
+      version: 2,
+      assets: [{ id: 'LTC', network: 'Litecoin', enabled: true }],
+    } as Record<string, unknown>);
+    expect(doc.version).toBe(4);
+    expect(doc.cooldownHours).toBe(24);
+    expect(doc.maxPerDay).toBe(3);
+    expect(doc.minAccountAgeHours).toBe(24);
+    expect(doc.requireFinishedGames).toBe(1);
+    expect(doc.coinPrecision).toBe(1_000_000);
+    expect(doc.destinationType).toBe('faucetpay_email');
+    const assets = doc.assets as Record<string, Record<string, unknown>>;
+    expect(assets.LTC!.enabled).toBe(true);
+    expect(assets.LTC!.minWithdrawCoins).toBe(20); // default canônico
+    expect(assets.BTC!.enabled).toBe(false); // sem entry legada ⇒ canônico
+  });
+
+  it('processor aceita saque LTC válido com config NORMALIZADA (test ⇒ SIM)', async () => {
+    // Réplica: getPayoutsConfig → makePayoutsConfig(normalized) alimenta o
+    // processador; aqui validamos a cadeia pura equivalente.
+    const n = normalizePayoutsDoc(null);
+    const ltc = n.assets.LTC!;
+    expect(ltc.enabled).toBe(true);
+    expect(ltc.minWithdrawCoins * 1_000_000).toBe(20_000_000);
+    expect((ltc.minWithdrawCoins - ltc.feeCoins) * ltc.litoshiPerCoin).toBe(
+      1800,
+    );
   });
 });

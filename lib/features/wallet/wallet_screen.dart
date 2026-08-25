@@ -242,28 +242,46 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
                     final List<PayoutAsset> enabled = all
                         .where((PayoutAsset a) => a.enabled)
                         .toList(growable: false);
-                    if (_selectedAssetId.isEmpty && enabled.isNotEmpty) {
-                      _selectedAssetId = enabled.first.id;
+                    // FALLBACK 12.9: config ausente/ilegível NUNCA bloqueia o
+                    // saque por parse local — exibe o ativo padrão (LTC) e
+                    // deixa a AUTORIDADE (runner/rules) validar de verdade.
+                    final bool useFallback = enabled.isEmpty;
+                    final List<PayoutAsset> selectable = useFallback
+                        ? <PayoutAsset>[_kFallbackLtc]
+                        : enabled;
+                    final List<WalletAssetChip> chips = useFallback
+                        ? selectable
+                            .map((PayoutAsset a) => WalletAssetChip(
+                                  id: a.id,
+                                  network: a.network,
+                                  symbol: _symbolFor(a.id),
+                                  enabled: true,
+                                ))
+                            .toList(growable: false)
+                        : all
+                            .map((PayoutAsset a) => WalletAssetChip(
+                                  id: a.id,
+                                  network: a.network,
+                                  symbol: _symbolFor(a.id),
+                                  enabled: a.enabled,
+                                ))
+                            .toList(growable: false);
+                    if (_selectedAssetId.isEmpty ||
+                        !selectable.any((PayoutAsset a) =>
+                            a.id == _selectedAssetId)) {
+                      _selectedAssetId = selectable.first.id;
                     }
                     return Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: <Widget>[
                         AssetSelector(
-                          assets: all
-                              .map((PayoutAsset a) => WalletAssetChip(
-                                    id: a.id,
-                                    network: a.network,
-                                    symbol: _symbolFor(a.id),
-                                    enabled: a.enabled,
-                                  ))
-                              .toList(growable: false),
+                          assets: chips,
                           selectedId: _selectedAssetId,
                           onSelected: (String id) =>
                               setState(() => _selectedAssetId = id),
                         ),
                         const SizedBox(height: 16),
-                        if (_selectedAssetId.isNotEmpty && enabled.isNotEmpty)
-                          _buildForm(enabled),
+                        _buildForm(selectable),
                       ],
                     );
                   },
@@ -314,6 +332,17 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
     );
   }
 }
+
+/// Ativo PADRÃO p/ fallback de display (12.9): usado SOMENTE quando a config
+/// do servidor está ausente/ilegível — o cliente nunca bloqueia o SOLICITAR
+/// por parse local; mínimos/taxas reais são validados pelo backend.
+final PayoutAsset _kFallbackLtc = PayoutAsset(
+  id: 'LTC',
+  network: 'FaucetPayEmail',
+  enabled: true,
+  minWithdrawUnits: BigInt.from(20000000), // 20 COIN (default documentado)
+  feeUnits: BigInt.from(2000000), // 2 COIN
+);
 
 /// Símbolo textual/geométrico simples por ativo (nunca logos oficiais).
 String _symbolFor(String assetId) {

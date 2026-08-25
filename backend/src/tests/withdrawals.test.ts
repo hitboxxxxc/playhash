@@ -57,10 +57,10 @@ describe('validateWithdrawal (a→h)', () => {
     });
   });
 
-  it('(b) abaixo do mínimo (20 coins)', () => {
+  it('(b) abaixo do mínimo (20 coins) ⇒ BELOW_MIN (canônico 12.9)', () => {
     expect(validateWithdrawal(input({ amountUnits: 19_999_999n }))).toEqual({
       ok: false,
-      failureCode: 'BELOW_MINIMUM',
+      failureCode: 'BELOW_MIN',
     });
     expect(validateWithdrawal(input({ amountUnits: 20_000_000n }))).toEqual({
       ok: true,
@@ -87,45 +87,36 @@ describe('validateWithdrawal (a→h)', () => {
     ).toEqual({ ok: true });
   });
 
-  it('(e) maxPerDay atingido', () => {
+  it('(e/f/g) antifraude (cota diária/idade/partidas/review) ⇒ ANTIFRAUD', () => {
     expect(validateWithdrawal(input({ withdrawalsToday: 3 }))).toEqual({
       ok: false,
-      failureCode: 'DAILY_LIMIT_REACHED',
+      failureCode: 'ANTIFRAUD',
     });
     expect(validateWithdrawal(input({ withdrawalsToday: 2 }))).toEqual({
       ok: true,
     });
-  });
-
-  it('(f) conta com menos de 24h é inelegível', () => {
     expect(
       validateWithdrawal(
         input({ accountCreatedAtMs: Date.now() - 2 * 3_600_000 }),
       ),
-    ).toEqual({ ok: false, failureCode: 'ACCOUNT_TOO_NEW' });
-  });
-
-  it('(f) exige ≥1 gameSession finished na vida', () => {
+    ).toEqual({ ok: false, failureCode: 'ANTIFRAUD' });
     expect(validateWithdrawal(input({ finishedGames: 0 }))).toEqual({
       ok: false,
-      failureCode: 'NO_FINISHED_GAMES',
+      failureCode: 'ANTIFRAUD',
     });
-  });
-
-  it('(g) conta em review bloqueia saque', () => {
     expect(validateWithdrawal(input({ userStatus: 'review' }))).toEqual({
       ok: false,
-      failureCode: 'ACCOUNT_IN_REVIEW',
+      failureCode: 'ANTIFRAUD',
     });
   });
 
-  it('(h) destino inválido: e-mail ⇒ INVALID_EMAIL; endereço ⇒ INVALID_ADDRESS', () => {
+  it('(h) destino inválido ⇒ EMAIL_INVALID (canônico 12.9)', () => {
     expect(
       validateWithdrawal(input({ destinationValid: false, destinationEmail: 'x@y' })),
-    ).toEqual({ ok: false, failureCode: 'INVALID_EMAIL' });
+    ).toEqual({ ok: false, failureCode: 'EMAIL_INVALID' });
     expect(validateWithdrawal(input({ destinationValid: false }))).toEqual({
       ok: false,
-      failureCode: 'INVALID_ADDRESS',
+      failureCode: 'EMAIL_INVALID',
     });
   });
 
@@ -157,10 +148,10 @@ describe('destino v3: validação e máscara de E-MAIL FaucetPay', () => {
     expect(maskEmail('invalido-sem-arroba')).not.toContain('invalido-sem-arroba');
   });
 
-  it('e-mail inválido é bloqueado na validação (a→h)', () => {
+  it('e-mail inválido é bloqueado na validação (a→h) — EMAIL_INVALID', () => {
     expect(
       validateWithdrawal(input({ destinationValid: false, destinationEmail: 'quebra-regex' })),
-    ).toEqual({ ok: false, failureCode: 'INVALID_EMAIL' });
+    ).toEqual({ ok: false, failureCode: 'EMAIL_INVALID' });
   });
 });
 
@@ -188,12 +179,12 @@ describe('conversão v3 integrada à validação de saques (e-mail FaucetPay)', 
     expect(validateProviderLitoshiMinimum(conv, LTC_V3)).toEqual({ ok: true });
   });
 
-  it('providerMin real acima do líquido ⇒ BELOW_PROVIDER_MIN (operacional)', () => {
+  it('providerMin real acima do líquido ⇒ BELOW_MIN (canônico 12.9)', () => {
     const conv = convertCoinsToLitoshi(20_000_000n, LTC_V3)!;
     const cfg: PayoutAssetConfig = { ...LTC_V3, providerMinLitoshi: 10_000n };
     expect(validateProviderLitoshiMinimum(conv, cfg)).toEqual({
       ok: false,
-      failureCode: 'BELOW_PROVIDER_MIN',
+      failureCode: 'BELOW_MIN',
     });
   });
 
@@ -349,17 +340,16 @@ describe('TestProvider (PAYOUT_MODE=test)', () => {
   });
 });
 
-describe('antifraude: códigos de elegibilidade (§36)', () => {
-  it('somente falhas de elegibilidade contam para o lock review', () => {
-    expect(ELIGIBILITY_FAILURE_CODES.has('ACCOUNT_TOO_NEW')).toBe(true);
-    expect(ELIGIBILITY_FAILURE_CODES.has('NO_FINISHED_GAMES')).toBe(true);
+describe('antifraude: códigos de elegibilidade (§36, canônico 12.9)', () => {
+  it('ANTIFRAUD e COOLDOWN_ACTIVE contam para o lock review', () => {
+    expect(ELIGIBILITY_FAILURE_CODES.has('ANTIFRAUD')).toBe(true);
     expect(ELIGIBILITY_FAILURE_CODES.has('COOLDOWN_ACTIVE')).toBe(true);
-    expect(ELIGIBILITY_FAILURE_CODES.has('DAILY_LIMIT_REACHED')).toBe(true);
-    expect(ELIGIBILITY_FAILURE_CODES.has('ACCOUNT_IN_REVIEW')).toBe(true);
     // Falhas operacionais NÃO contam:
-    expect(ELIGIBILITY_FAILURE_CODES.has('INVALID_ADDRESS')).toBe(false);
-    expect(ELIGIBILITY_FAILURE_CODES.has('BELOW_MINIMUM')).toBe(false);
+    expect(ELIGIBILITY_FAILURE_CODES.has('EMAIL_INVALID')).toBe(false);
+    expect(ELIGIBILITY_FAILURE_CODES.has('BELOW_MIN')).toBe(false);
     expect(ELIGIBILITY_FAILURE_CODES.has('ASSET_DISABLED')).toBe(false);
+    expect(ELIGIBILITY_FAILURE_CODES.has('INSUFFICIENT_BALANCE')).toBe(false);
+    expect(ELIGIBILITY_FAILURE_CODES.has('PROVIDER_ERROR')).toBe(false);
   });
 });
 
@@ -400,10 +390,10 @@ describe('CORREÇÃO 12.8: normalização de ids + gate de modo + fluxo LTC v3',
     expect(validateProviderMinForMode('test', LTC_V3)).toEqual({ ok: true });
   });
 
-  it('providerMinLitoshi null em LIVE ⇒ BELOW_PROVIDER_MIN até o probe', () => {
+  it('providerMinLitoshi null em LIVE ⇒ BELOW_MIN até o probe', () => {
     expect(validateProviderMinForMode('live', LTC_V3)).toEqual({
       ok: false,
-      failureCode: 'BELOW_PROVIDER_MIN',
+      failureCode: 'BELOW_MIN',
     });
     // Com mínimo real confirmado, live valida normalmente:
     const cfg: PayoutAssetConfig = { ...LTC_V3, providerMinLitoshi: 1000n };
@@ -446,7 +436,7 @@ describe('CORREÇÃO 12.8: normalização de ids + gate de modo + fluxo LTC v3',
   it('recusas seguras permanecem: mínimo/saldo/cooldown não mudaram', () => {
     expect(
       validateWithdrawal({ ...BASE, amountUnits: 19_999_999n }),
-    ).toEqual({ ok: false, failureCode: 'BELOW_MINIMUM' });
+    ).toEqual({ ok: false, failureCode: 'BELOW_MIN' });
     expect(
       validateWithdrawal({ ...BASE, availableBalanceUnits: 1n }),
     ).toEqual({ ok: false, failureCode: 'INSUFFICIENT_BALANCE' });
@@ -484,5 +474,13 @@ describe('conversão v2 integrada à validação de saques', () => {
     // Estorno íntegro: nada foi debitado quando a validação falha ANTES da reserva.
     expect(conv.grossAssetUnits).toBe(600_000_000n);
     expect(conv.receivedAssetUnits).toBe(550_000_000n);
+  });
+
+  it('BELOW_PROVIDER_MIN virou BELOW_MIN no esquema canônico (12.9)', () => {
+    const conv = convertCoinToAsset(DOGE_CFG.minWithdrawUnits / 2n, DOGE_CFG)!;
+    expect(validateProviderMinimum(conv, DOGE_CFG)).toEqual({
+      ok: false,
+      failureCode: 'BELOW_MIN',
+    });
   });
 });

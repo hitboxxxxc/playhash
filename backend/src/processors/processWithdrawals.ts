@@ -29,6 +29,10 @@
 import { FieldValue, Firestore } from 'firebase-admin/firestore';
 import { ProcessingSummary } from '../core/types';
 import { getEconomyConfig } from '../core/config';
+import {
+  buildPayoutsV4Doc,
+  normalizePayoutsDoc,
+} from '../core/payoutsUpgrade';
 import { coinToAsset, coinsToLitoshi, floorDiv, toInt } from '../core/precision';
 import { writeAudit, auditEventId } from '../core/audit';
 import { counterKey, utcDayKey } from '../core/ratelimit';
@@ -105,13 +109,17 @@ export function validateProviderMinimum(
 ): WithdrawalValidation {
   const required = cfg.providerMinAssetUnits + cfg.providerFeeAssetUnits;
   if (conversion.grossAssetUnits < required) {
-    return { ok: false, failureCode: 'BELOW_PROVIDER_MIN' };
+    // Código canônico 12.9 (antes BELOW_PROVIDER_MIN).
+    return { ok: false, failureCode: 'BELOW_MIN' };
   }
   return { ok: true };
 }
 
 export interface PayoutsConfig {
-  assets: PayoutAssetConfig[];
+  /** Mapa CANÔNICO v4 keyed por id UPPERCASE. */
+  assets: Record<string, PayoutAssetConfig>;
+  /** Acessor ÚNICO normalizado (aceita qualquer caixa/espaços). */
+  getAsset(id: string): PayoutAssetConfig | undefined;
   cooldownHours: number;
   maxPerDay: number;
   minAccountAgeHours: number;
@@ -123,56 +131,78 @@ export interface PayoutsConfig {
 /** 1 coin = 1e6 units (coinPrecision da config/economy). */
 const COIN_PRECISION_UNITS = 1_000_000;
 
-const DEFAULT_PAYOUTS: PayoutsConfig = {
-  assets: [],
-  cooldownHours: 24,
-  maxPerDay: 3,
-  minAccountAgeHours: 24,
-  requireFinishedGames: 1,
-  coinPrecision: 1_000_000,
-  version: 1,
-};
+/** Converte um ativo canônico v4 p/ a forma interna do processador. */
+function assetFromV4(id: string, a: {
+  enabled: boolean;
+  litoshiPerCoin: number;
+  minWithdrawCoins: number;
+  feeCoins: number;
+  providerMinLitoshi: number | null;
+  displayRate: string;
+}): PayoutAssetConfig {
+  const litoshi = BigInt(Math.max(a.litoshiPerCoin, 0));
+  return {
+    id,
+    network: 'FaucetPayEmail',
+    enabled: a.enabled,
+    minWithdrawUnits: BigInt(Math.max(a.minWithdrawCoins, 0)) * BigInt(COIN_PRECISION_UNITS),
+    feeUnits: BigInt(Math.max(a.feeCoins, 0)) * BigInt(COIN_PRECISION_UNITS),
+    assetDecimals: 8,
+    assetUnitPerCoinScaled: litoshi,
+    providerMinAssetUnits: 0n,
+    providerFeeAssetUnits: 0n,
+    rateSource: 'fixed',
+    litoshiPerCoin: litoshi,
+    providerMinLitoshi:
+      a.providerMinLitoshi === null ? null : BigInt(Math.max(a.providerMinLitoshi, 0)),
+    displayRate: a.displayRate || undefined,
+  };
+}
 
-/** Lê config/payouts; doc ausente ⇒ config vazia (nenhum ativo habilitado). */
-export async function getPayoutsConfig(db: Firestore): Promise<PayoutsConfig> {
-  const snap = await db.doc('config/payouts').get();
-  if (!snap.exists) return DEFAULT_PAYOUTS;
-  const data = snap.data() ?? {};
-  const rawAssets = Array.isArray(data.assets) ? data.assets : [];
-  const assets: PayoutAssetConfig[] = rawAssets
-    .map((a) => a as Record<string, unknown>)
-    .filter((a) => typeof a.id === 'string' && typeof a.network === 'string')
-    .map((a) => ({
-      id: String(a.id),
-      network: String(a.network),
-      enabled: a.enabled === true,
-      minWithdrawUnits: toInt((a.minWithdrawUnits ?? 0) as number | string),
-      feeUnits: toInt((a.feeUnits ?? 0) as number | string),
-      assetDecimals: Number(a.assetDecimals ?? 8),
-      assetUnitPerCoinScaled: toInt((a.assetUnitPerCoinScaled ?? 0) as number | string),
-      providerMinAssetUnits: toInt((a.providerMinAssetUnits ?? 0) as number | string),
-      providerFeeAssetUnits: toInt((a.providerFeeAssetUnits ?? 0) as number | string),
-      rateSource: typeof a.rateSource === 'string' ? String(a.rateSource) : undefined,
-      litoshiPerCoin: toInt((a.litoshiPerCoin ?? 0) as number | string),
-      providerMinLitoshi:
-        a.providerMinLitoshi === null || a.providerMinLitoshi === undefined
-          ? null
-          : toInt(a.providerMinLitoshi as number | string),
-      displayRate: typeof a.displayRate === 'string' ? String(a.displayRate) : undefined,
-    }));
+function makePayoutsConfig(
+  n: ReturnType<typeof normalizePayoutsDoc>,
+  healedFromVersion: number,
+): PayoutsConfig {
+  const assets: Record<string, PayoutAssetConfig> = {};
+  for (const [id, a] of Object.entries(n.assets)) {
+    assets[id] = assetFromV4(id, a);
+  }
   return {
     assets,
-    cooldownHours: Number(data.cooldownHours ?? DEFAULT_PAYOUTS.cooldownHours),
-    maxPerDay: Number(data.maxPerDay ?? DEFAULT_PAYOUTS.maxPerDay),
-    minAccountAgeHours: Number(
-      data.minAccountAgeHours ?? DEFAULT_PAYOUTS.minAccountAgeHours,
-    ),
-    requireFinishedGames: Number(
-      data.requireFinishedGames ?? DEFAULT_PAYOUTS.requireFinishedGames,
-    ),
-    coinPrecision: Number(data.coinPrecision ?? DEFAULT_PAYOUTS.coinPrecision),
-    version: Number(data.version ?? 1),
+    getAsset(id: string): PayoutAssetConfig | undefined {
+      return assets[normalizeAssetId(id)];
+    },
+    cooldownHours: n.cooldownHours,
+    maxPerDay: n.maxPerDay,
+    minAccountAgeHours: n.minAccountAgeHours,
+    requireFinishedGames: n.requireFinishedGames,
+    coinPrecision: n.coinPrecision,
+    // O processador SEMPRE trabalha na semântica canônica v4.
+    version: Math.max(n.version, healedFromVersion >= 4 ? 4 : 0) || 4,
   };
+}
+
+/**
+ * Lê config/payouts com NORMALIZAÇÃO de legado + AUTO-HEAL (12.9):
+ * aceita QUALQUER forma anterior (array/mapa, ids lower/upper, campos antigos)
+ * e, se o doc estiver ausente ou em version<4, PERSISTE o schema canônico v4
+ * (merge seguro) ANTES de processar — log "config healed".
+ */
+export async function getPayoutsConfig(db: Firestore): Promise<PayoutsConfig> {
+  const ref = db.doc('config/payouts');
+  const snap = await ref.get();
+  const data = (snap.data() ?? null) as Record<string, unknown> | null;
+  const normalized = normalizePayoutsDoc(data);
+  const needsHeal =
+    !snap.exists || normalized.version < 4 || !Array.isArray(data?.assets);
+  if (needsHeal) {
+    await ref.set(buildPayoutsV4Doc(data), { merge: true });
+    console.log(
+      `[processWithdrawals] config healed version=${snap.exists ? normalized.version : 'absent'}→4`,
+    );
+    return makePayoutsConfig(normalized, 4);
+  }
+  return makePayoutsConfig(normalized, normalized.version);
 }
 
 /**
@@ -213,7 +243,8 @@ export function validateProviderMinForMode(
   cfg: PayoutAssetConfig,
 ): WithdrawalValidation {
   if (payoutMode === 'live' && cfg.providerMinLitoshi === null) {
-    return { ok: false, failureCode: 'BELOW_PROVIDER_MIN' };
+    // Código canônico 12.9 (antes BELOW_PROVIDER_MIN).
+    return { ok: false, failureCode: 'BELOW_MIN' };
   }
   return { ok: true };
 }
@@ -282,14 +313,16 @@ export type WithdrawalValidation =
   | { ok: true }
   | { ok: false; failureCode: string };
 
-/** Códigos que contam como FALHA DE ELEGIBILIDADE p/ o lock 'review' (§36). */
-export const ELIGIBILITY_FAILURE_CODES = new Set([
-  'ACCOUNT_TOO_NEW',
-  'NO_FINISHED_GAMES',
-  'COOLDOWN_ACTIVE',
-  'DAILY_LIMIT_REACHED',
-  'ACCOUNT_IN_REVIEW',
-]);
+/**
+ * Códigos CANÔNICOS de recusa (12.9): ASSET_DISABLED, BELOW_MIN,
+ * INSUFFICIENT_BALANCE, COOLDOWN_ACTIVE, ANTIFRAUD, EMAIL_INVALID,
+ * PROVIDER_ERROR (+ BELOW_PROVIDER_MIN operacional pré-reserva).
+ * Códigos que contam como FALHA DE ELEGIBILIDADE p/ o lock 'review' (§36):
+ * antifraude e cooldown — mesmo comportamento do esquema anterior
+ * (ACCOUNT_TOO_NEW/NO_FINISHED_GAMES/DAILY_LIMIT_REACHED/ACCOUNT_IN_REVIEW
+ * agora convergem p/ ANTIFRAUD).
+ */
+export const ELIGIBILITY_FAILURE_CODES = new Set(['COOLDOWN_ACTIVE', 'ANTIFRAUD']);
 
 export interface WithdrawalValidationInput {
   assetEnabled: boolean;
@@ -350,31 +383,34 @@ export function convertCoinsToLitoshi(
 /**
  * Validação v3 contra o mínimo REAL do envio interno (providerMinLitoshi).
  * null = mínimo ainda não confirmado pelo probe ⇒ passa (o mínimo da
- * plataforma minWithdrawUnits é a única barreira). Código seguro
- * BELOW_PROVIDER_MIN (NÃO conta p/ lock 'review').
+ * plataforma minWithdrawUnits é a única barreira). Código canônico
+ * BELOW_MIN (NÃO conta p/ lock 'review').
  */
 export function validateProviderLitoshiMinimum(
   conversion: EmailConversion,
   cfg: PayoutAssetConfig,
 ): WithdrawalValidation {
   if (cfg.providerMinLitoshi !== null && conversion.receivedLitoshi < cfg.providerMinLitoshi) {
-    return { ok: false, failureCode: 'BELOW_PROVIDER_MIN' };
+    // Código canônico 12.9 (antes BELOW_PROVIDER_MIN).
+    return { ok: false, failureCode: 'BELOW_MIN' };
   }
   return { ok: true };
 }
 
 /**
- * Ordem EXATA do prompt 10 B.1 (a→h). Retorna UM código por falha
- * (primeira que ocorre) — códigos seguros, sem dados sensíveis.
+ * Ordem a→h com CÓDIGOS CANÔNICOS (12.9). Retorna UM código por falha
+ * (primeira que ocorre) — códigos próprios e seguros, sem dados sensíveis:
+ * ASSET_DISABLED · BELOW_MIN · INSUFFICIENT_BALANCE · COOLDOWN_ACTIVE ·
+ * ANTIFRAUD (idade da conta/sem partidas/cota diária/review) · EMAIL_INVALID.
  */
 export function validateWithdrawal(
   input: WithdrawalValidationInput,
 ): WithdrawalValidation {
-  // (a) config ativa p/ ativo
+  // (a) config ativa p/ ativo — SOMENTE se explicitamente disabled/ausente
   if (!input.assetEnabled) return { ok: false, failureCode: 'ASSET_DISABLED' };
   // (b) amount ≥ mínimo
   if (input.amountUnits < input.minWithdrawUnits) {
-    return { ok: false, failureCode: 'BELOW_MINIMUM' };
+    return { ok: false, failureCode: 'BELOW_MIN' };
   }
   // (c) saldo disponível ≥ amount
   if (input.availableBalanceUnits < input.amountUnits) {
@@ -388,27 +424,25 @@ export function validateWithdrawal(
   ) {
     return { ok: false, failureCode: 'COOLDOWN_ACTIVE' };
   }
-  // (e) máximo de saques por dia
+  // (e/f/g) antifraude: cota diária, idade da conta, partidas finished, review
   if (input.withdrawalsToday >= input.maxPerDay) {
-    return { ok: false, failureCode: 'DAILY_LIMIT_REACHED' };
+    return { ok: false, failureCode: 'ANTIFRAUD', };
   }
-  // (f) elegibilidade: idade da conta + gameSessions finished na vida
   if (
     Date.now() - input.accountCreatedAtMs <
     input.minAccountAgeHours * 3_600_000
   ) {
-    return { ok: false, failureCode: 'ACCOUNT_TOO_NEW' };
+    return { ok: false, failureCode: 'ANTIFRAUD' };
   }
   if (input.finishedGames < input.requireFinishedGames) {
-    return { ok: false, failureCode: 'NO_FINISHED_GAMES' };
+    return { ok: false, failureCode: 'ANTIFRAUD' };
   }
-  // (g) sem flag antifraude em users/{uid}.status
   if (input.userStatus === 'review') {
-    return { ok: false, failureCode: 'ACCOUNT_IN_REVIEW' };
+    return { ok: false, failureCode: 'ANTIFRAUD' };
   }
   // (h) destino válido: e-mail FaucetPay (v3) ou endereço por rede (legado)
   if (!input.destinationValid) {
-    return { ok: false, failureCode: input.destinationEmail ? 'INVALID_EMAIL' : 'INVALID_ADDRESS' };
+    return { ok: false, failureCode: 'EMAIL_INVALID' };
   }
   return { ok: true };
 }
@@ -904,7 +938,8 @@ async function handleIntent(
     }
 
     // ---- Validações antifraude (a→h) -------------------------------------
-    const assetCfg = payouts.assets.find((a) => a.id === intent.asset);
+    // Acessor ÚNICO normalizado (12.9): aceita qualquer caixa/espaços.
+    const assetCfg = payouts.getAsset(intent.asset);
     const user = await getUserDoc(db, intent.uid);
     const [finishedGames, lastAt, todayCount] = await Promise.all([
       countFinishedGames(db, intent.uid),
@@ -944,7 +979,7 @@ async function handleIntent(
       const emailConv = convertCoinsToLitoshi(intent.amountUnits, assetCfg);
       if (emailConv) {
         if (emailConv.receivedLitoshi <= 0n) {
-          return await failBeforeReserve(db, intent, 'BELOW_MINIMUM', ruleVersion, nowMs);
+          return await failBeforeReserve(db, intent, 'BELOW_MIN', ruleVersion, nowMs);
         }
         // CORREÇÃO 12.8: em LIVE exige mínimo REAL confirmado pelo probe
         // (providerMinLitoshi); em TEST null ⇒ default seguro documentado.

@@ -19,6 +19,11 @@ const Set<String> kWithdrawalIntentAllowedKeys = <String>{
 
 /// Ativo de saque — espelho SOMENTE-LEITURA de um item de
 /// `config/payouts.assets` ("valores definidos pelo servidor").
+///
+/// TOLERANTE A LEGADO (12.9): aceita campos v3/v4 e aliases antigos
+/// (assetUnitPerCoinScaled→litoshiPerCoin, minWithdrawUnits/feeUnits em
+/// units ⇒ coins), ids em qualquer caixa. O PARSE NUNCA BLOQUEIA o saque —
+/// é apenas apresentação; a autoridade é 100% do backend.
 class PayoutAsset {
   const PayoutAsset({
     required this.id,
@@ -30,8 +35,8 @@ class PayoutAsset {
     this.displayRate = '1 COIN = 0,000001 LTC',
   });
 
-  final String id; // BTC | LTC | DOGE | USDT
-  final String network; // FaucetPayEmail (v3) | Bitcoin | Litecoin | …
+  final String id; // BTC | LTC | DOGE | USDT (SEMPRE uppercase)
+  final String network; // FaucetPayEmail (v3/v4) | Bitcoin | Litecoin | …
   final bool enabled;
 
   /// Mínimo de saque em units (1 coin = 1e6 units).
@@ -40,7 +45,8 @@ class PayoutAsset {
   /// Taxa do servidor em units (descontada do valor bruto).
   final BigInt feeUnits;
 
-  /// Conversão FIXA v3: 1 COIN = N litoshi (apresentação; oficial no backend).
+  /// Conversão FIXA v3/v4: 1 COIN = N litoshi (apresentação; oficial no
+  /// backend). Fallback seguro p/ display quando ausente.
   final int litoshiPerCoin;
 
   /// Rótulo de exibição da conversão (definido pelo servidor).
@@ -53,33 +59,65 @@ class PayoutAsset {
     return BigInt.zero;
   }
 
-  factory PayoutAsset.fromMap(Map<String, dynamic> map) => PayoutAsset(
-        id: (map['id'] as String?) ?? '',
-        network: (map['network'] as String?) ?? '',
-        enabled: map['enabled'] == true,
-        minWithdrawUnits: _toBigInt(map['minWithdrawUnits']),
-        feeUnits: _toBigInt(map['feeUnits']),
-        litoshiPerCoin:
-            (map['litoshiPerCoin'] is int) ? map['litoshiPerCoin'] as int : 100,
-        displayRate: (map['displayRate'] as String?) ??
-            '1 COIN = 0,000001 LTC',
-      );
+  static int _toInt(Object? value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    if (value is String) return int.tryParse(value) ?? 0;
+    return 0;
+  }
+
+  factory PayoutAsset.fromMap(String id, Map<String, dynamic> map) {
+    // Aliases legado → canônico (12.9):
+    final int litoshi = _toInt(map['litoshiPerCoin']) != 0
+        ? _toInt(map['litoshiPerCoin'])
+        : _toInt(map['assetUnitPerCoinScaled']);
+    final BigInt minCoins = _toBigInt(map['minWithdrawCoins']);
+    final BigInt feeCoins = _toBigInt(map['feeCoins']);
+    return PayoutAsset(
+      id: id.trim().toUpperCase(),
+      network: (map['network'] as String?) ?? 'FaucetPayEmail',
+      enabled: map['enabled'] == true,
+      minWithdrawUnits: minCoins != BigInt.zero
+          ? minCoins * BigInt.from(1000000)
+          : _toBigInt(map['minWithdrawUnits']),
+      feeUnits: feeCoins != BigInt.zero
+          ? feeCoins * BigInt.from(1000000)
+          : _toBigInt(map['feeUnits']),
+      litoshiPerCoin: litoshi != 0 ? litoshi : 100,
+      displayRate: (map['displayRate'] as String?) ??
+          (litoshi != 0 ? '1 COIN = 0,00000$litoshi LTC' : '1 COIN = 0,000001 LTC'),
+    );
+  }
 }
 
-/// Config de saques — espelho de `config/payouts`.
+/// Config de saques — espelho TOLERANTE de `config/payouts` (12.9): aceita
+/// `assets` como LISTA (v1–v3) ou MAPA keyed por id (v4), ids lower/upper.
 class PayoutsConfigModel {
   const PayoutsConfigModel({required this.assets});
 
   /// Apenas os ativos como estão na config (filtrar `enabled` na UI).
   final List<PayoutAsset> assets;
 
-  factory PayoutsConfigModel.fromMap(Map<String, dynamic> map) =>
-      PayoutsConfigModel(
-        assets: ((map['assets'] as List<dynamic>?) ?? const <dynamic>[])
-            .whereType<Map<String, dynamic>>()
-            .map(PayoutAsset.fromMap)
-            .toList(growable: false),
-      );
+  factory PayoutsConfigModel.fromMap(Map<String, dynamic> map) {
+    final Object? raw = map['assets'];
+    final List<PayoutAsset> parsed = <PayoutAsset>[];
+    if (raw is List) {
+      for (final Object? item in raw) {
+        if (item is Map) {
+          final String id = ((item['id'] as String?) ?? '').trim();
+          if (id.isEmpty) continue;
+          parsed.add(PayoutAsset.fromMap(id, item.cast<String, dynamic>()));
+        }
+      }
+    } else if (raw is Map) {
+      raw.forEach((Object? key, Object? value) {
+        if (key is String && value is Map) {
+          parsed.add(PayoutAsset.fromMap(key, value.cast<String, dynamic>()));
+        }
+      });
+    }
+    return PayoutsConfigModel(assets: parsed);
+  }
 }
 
 /// Espelho SOMENTE-LEITURA de `withdrawals/{id}` (escrito pelo runner).

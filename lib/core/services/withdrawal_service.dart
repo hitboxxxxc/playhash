@@ -21,27 +21,40 @@ class WithdrawalResult {
   bool get isFailed => status == 'failed';
 }
 
-/// Mensagem SEGURA em PT-BR por errorCode do runner (sem detalhes internos).
+/// Mensagem SEGURA em PT-BR por errorCode CANÔNICO do runner (12.9):
+/// ASSET_DISABLED · BELOW_MIN · INSUFFICIENT_BALANCE · COOLDOWN_ACTIVE ·
+/// ANTIFRAUD · EMAIL_INVALID · PROVIDER_ERROR. Códigos legados (docs antigos)
+/// continuam mapeados; detalhes técnicos ficam só no log local.
 String withdrawalErrorMessage(String? errorCode) {
   switch (errorCode) {
     case 'INSUFFICIENT_BALANCE':
       return 'Saldo disponível insuficiente para este saque.';
+    // Canônico 12.9 + legados:
     case 'BELOW_MINIMUM':
     case 'AMOUNT_TOO_LOW':
+    case 'BELOW_PROVIDER_MIN':
     case 'BELOW_MIN':
       return 'Valor abaixo do mínimo definido pelo servidor.';
     case 'COOLDOWN_ACTIVE':
       return 'Aguarde o intervalo entre saques (24h).';
+    // Canônico ANTIFRAUD + legados que convergem p/ ele:
+    case 'ANTIFRAUD':
     case 'DAILY_LIMIT_REACHED':
-      return 'Limite diário de saques atingido.';
+      return 'Saques temporariamente indisponíveis para esta conta. '
+          'Tente novamente mais tarde.';
     case 'ACCOUNT_TOO_NEW':
       return 'Sua conta ainda não tem 24h — tente mais tarde.';
     case 'NO_FINISHED_GAMES':
       return 'Jogue ao menos uma partida antes de solicitar um saque.';
     case 'ACCOUNT_IN_REVIEW':
       return 'Conta em análise. Saques bloqueados temporariamente.';
+    // Canônico EMAIL_INVALID + legados:
+    case 'EMAIL_INVALID':
     case 'INVALID_ADDRESS':
       return 'Destino inválido para o saque.';
+    case 'PROVIDER_ERROR':
+      return 'Provedor de pagamento temporariamente indisponível. '
+          'Tente novamente mais tarde.';
     case 'INVALID_EMAIL':
       return 'E-mail da FaucetPay inválido.';
     case 'EMAIL_NOT_FOUND':

@@ -43,12 +43,12 @@ describe('antifraude: cooldown × maxPerDay', () => {
     ).toEqual({ ok: false, failureCode: 'COOLDOWN_ACTIVE' });
   });
 
-  it('cooldown vencido + cota cheia ⇒ DAILY_LIMIT_REACHED', () => {
+  it('cooldown vencido + cota cheia ⇒ ANTIFRAUD (canônico 12.9)', () => {
     expect(
       validateWithdrawal(
         base({ lastNonFailedWithdrawalAtMs: NOW - 30 * HOUR, withdrawalsToday: 3 }),
       ),
-    ).toEqual({ ok: false, failureCode: 'DAILY_LIMIT_REACHED' });
+    ).toEqual({ ok: false, failureCode: 'ANTIFRAUD' });
   });
 
   it('saques FAILED não contam para cooldown nem para maxPerDay', () => {
@@ -76,16 +76,16 @@ describe('antifraude: cooldown × maxPerDay', () => {
 });
 
 describe('antifraude: elegibilidade da conta', () => {
-  it('conta recém-criada (<24h) é inelegível mesmo com saldo alto', () => {
+  it('conta recém-criada (<24h) é inelegível mesmo com saldo alto ⇒ ANTIFRAUD', () => {
     expect(
       validateWithdrawal(base({ accountCreatedAtMs: NOW - 23 * HOUR })),
-    ).toEqual({ ok: false, failureCode: 'ACCOUNT_TOO_NEW' });
+    ).toEqual({ ok: false, failureCode: 'ANTIFRAUD' });
   });
 
-  it('sem nenhuma partida finished é inelegível', () => {
+  it('sem nenhuma partida finished é inelegível ⇒ ANTIFRAUD', () => {
     expect(validateWithdrawal(base({ finishedGames: 0 }))).toEqual({
       ok: false,
-      failureCode: 'NO_FINISHED_GAMES',
+      failureCode: 'ANTIFRAUD',
     });
   });
 
@@ -94,7 +94,7 @@ describe('antifraude: elegibilidade da conta', () => {
       validateWithdrawal(
         base({ finishedGames: 2, requireFinishedGames: 3 }),
       ),
-    ).toEqual({ ok: false, failureCode: 'NO_FINISHED_GAMES' });
+    ).toEqual({ ok: false, failureCode: 'ANTIFRAUD' });
     expect(
       validateWithdrawal(
         base({ finishedGames: 3, requireFinishedGames: 3 }),
@@ -113,35 +113,29 @@ describe('antifraude: lock review após 3 falhas de elegibilidade (§36)', () =>
     failures: number;
     locked: boolean;
   } {
-    const ELIGIBILITY = new Set([
-      'ACCOUNT_TOO_NEW',
-      'NO_FINISHED_GAMES',
-      'COOLDOWN_ACTIVE',
-      'DAILY_LIMIT_REACHED',
-      'ACCOUNT_IN_REVIEW',
-    ]);
+    const ELIGIBILITY = new Set(['COOLDOWN_ACTIVE', 'ANTIFRAUD']);
     const failures = failuresSoFar + 1;
     const locked = failures >= 3 && ELIGIBILITY.has(code);
     return { failures, locked };
   }
 
   it('1ª e 2ª falhas NÃO travam a conta', () => {
-    expect(decideLock(0, 'ACCOUNT_TOO_NEW')).toEqual({ failures: 1, locked: false });
-    expect(decideLock(1, 'NO_FINISHED_GAMES')).toEqual({ failures: 2, locked: false });
+    expect(decideLock(0, 'ANTIFRAUD')).toEqual({ failures: 1, locked: false });
+    expect(decideLock(1, 'ANTIFRAUD')).toEqual({ failures: 2, locked: false });
   });
 
   it('3ª falha de elegibilidade TRAVA a conta (review)', () => {
     expect(decideLock(2, 'COOLDOWN_ACTIVE')).toEqual({ failures: 3, locked: true });
   });
 
-  it('falha OPERACIONAL (ex.: INVALID_ADDRESS) nunca trava sozinha', () => {
-    expect(decideLock(2, 'INVALID_ADDRESS')).toEqual({ failures: 3, locked: false });
+  it('falha OPERACIONAL (ex.: EMAIL_INVALID) nunca trava sozinha', () => {
+    expect(decideLock(2, 'EMAIL_INVALID')).toEqual({ failures: 3, locked: false });
   });
 
-  it('conta travada rejeita novos saques com ACCOUNT_IN_REVIEW', () => {
+  it('conta travada rejeita novos saques com ANTIFRAUD', () => {
     expect(validateWithdrawal(base({ userStatus: 'review' }))).toEqual({
       ok: false,
-      failureCode: 'ACCOUNT_IN_REVIEW',
+      failureCode: 'ANTIFRAUD',
     });
   });
 });
@@ -160,13 +154,13 @@ describe('antifraude: precedência e limites', () => {
     // Com saldo OK, review aparece.
     expect(
       validateWithdrawal(base({ userStatus: 'review' })),
-    ).toEqual({ ok: false, failureCode: 'ACCOUNT_IN_REVIEW' });
+    ).toEqual({ ok: false, failureCode: 'ANTIFRAUD' });
   });
 
-  it('destino inválido é a última checagem (h) — e-mail ⇒ INVALID_EMAIL', () => {
+  it('destino inválido é a última checagem (h) — e-mail ⇒ EMAIL_INVALID', () => {
     expect(
       validateWithdrawal(base({ destinationValid: false, destinationEmail: 'x@y' })),
-    ).toEqual({ ok: false, failureCode: 'INVALID_EMAIL' });
+    ).toEqual({ ok: false, failureCode: 'EMAIL_INVALID' });
   });
 
   it('fluxo completo válido permanece ok', () => {

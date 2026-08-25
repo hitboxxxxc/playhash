@@ -146,7 +146,7 @@ export async function runPayoutProbe(
 
   // Ativos habilitados + decimais vêm da config/payouts (autoridade backend).
   const payouts = await getPayoutsConfig(db);
-  const queries = payouts.assets
+  const queries = Object.values(payouts.assets)
     .filter((a) => a.enabled)
     .map((a) => ({ id: a.id, decimals: a.assetDecimals }));
 
@@ -179,7 +179,7 @@ export async function runPayoutProbe(
   // expõe o mínimo, compara com o providerMinLitoshi da config e recomenda
   // ajuste de minWithdrawCoins — o AJUSTE é registrado no relatório (a edição
   // da config continua sendo ação humana/seed).
-  const ltcCfg = payouts.assets.find((a) => a.id.toUpperCase() === 'LTC');
+  const ltcCfg = payouts.getAsset('LTC');
   if (ltcCfg) {
     const cfgMin = ltcCfg.providerMinLitoshi;
     console.log(
@@ -239,7 +239,7 @@ export async function runPayoutLiveTest(
 
   // Decimais + mínimo real vêm da config/payouts v2 (autoridade backend).
   const payouts = await getPayoutsConfig(db);
-  const cfg: PayoutAssetConfig | undefined = payouts.assets.find((a) => a.id === opts.asset);
+  const cfg: PayoutAssetConfig | undefined = payouts.getAsset(opts.asset);
   const decimals = cfg?.assetDecimals ?? 8;
   let amountUnits: bigint | null;
   if (opts.amountDecimal.trim()) {

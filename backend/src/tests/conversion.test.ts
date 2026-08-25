@@ -131,11 +131,11 @@ describe('validateProviderMinimum (mínimo/taxa reais da FaucetPay)', () => {
     expect(validateProviderMinimum(conv, DOGE)).toEqual({ ok: true });
   });
 
-  it('abaixo do necessário ⇒ BELOW_PROVIDER_MIN (código seguro)', () => {
+  it('abaixo do necessário ⇒ BELOW_MIN (canônico 12.9)', () => {
     const conv = convertCoinToAsset(200_000_000n, DOGE)!; // 4 DOGE < 5.5
     expect(validateProviderMinimum(conv, DOGE)).toEqual({
       ok: false,
-      failureCode: 'BELOW_PROVIDER_MIN',
+      failureCode: 'BELOW_MIN',
     });
   });
 
@@ -189,13 +189,13 @@ describe('convertCoinsToLitoshi (helper único v3 do processador)', () => {
     expect(convertCoinsToLitoshi(1n, BTC)).toBeNull();
   });
 
-  it('validateProviderLitoshiMinimum: null ⇒ passa; real > recebido ⇒ BELOW_PROVIDER_MIN', () => {
+  it('validateProviderLitoshiMinimum: null ⇒ passa; real > recebido ⇒ BELOW_MIN', () => {
     const conv = convertCoinsToLitoshi(20_000_000n, LTC_V3)!;
     expect(validateProviderLitoshiMinimum(conv, LTC_V3)).toEqual({ ok: true });
     const withMin: PayoutAssetConfig = { ...LTC_V3, providerMinLitoshi: 5000n };
     expect(validateProviderLitoshiMinimum(conv, withMin)).toEqual({
       ok: false,
-      failureCode: 'BELOW_PROVIDER_MIN',
+      failureCode: 'BELOW_MIN',
     });
     const okMin: PayoutAssetConfig = { ...LTC_V3, providerMinLitoshi: 1800n };
     expect(validateProviderLitoshiMinimum(conv, okMin)).toEqual({ ok: true });
@@ -247,19 +247,37 @@ describe('payoutProbe (read-only; NUNCA envia payout)', () => {
     }) as unknown as typeof fetch;
   }
 
-  /** Stub mínimo de Firestore p/ getPayoutsConfig (config/payouts v2). */
+  /**
+   * Stub mínimo de Firestore p/ getPayoutsConfig — JÁ em v4 canônico
+   * (assets como MAPA keyed por id) ⇒ auto-heal NÃO dispara.
+   */
   function fakeDb(assets: unknown[]) {
+    const map: Record<string, unknown> = {};
+    for (const a of assets as Record<string, unknown>[]) {
+      map[String(a.id)] = { ...a };
+    }
+    const doc = { assets: map, version: 4 };
     const snap = {
       exists: true,
-      data: () => ({ assets, version: 2 }),
-      get: (field: string) => (field === 'assets' ? assets : field === 'version' ? 2 : undefined),
+      data: () => doc,
+      get: (field: string) =>
+        field === 'assets' ? map : field === 'version' ? 4 : undefined,
     };
-    return { doc: () => ({ get: async () => snap }) } as never;
+    return {
+      doc: () => ({
+        get: async () => snap,
+        set: async () => undefined,
+      }),
+    } as never;
   }
 
+  // LTC/USDT presentes e DESABILITADOS (a normalização v4 garante completude
+  // canônica; sem entry explícita o default de LTC seria habilitado).
   const CONFIG_ASSETS = [
     { id: 'BTC', network: 'Bitcoin', enabled: true, assetDecimals: 8 },
     { id: 'DOGE', network: 'Dogecoin', enabled: true, assetDecimals: 8 },
+    { id: 'LTC', network: 'FaucetPayEmail', enabled: false },
+    { id: 'USDT', network: 'TRC20', enabled: false },
   ];
 
   it('fora de ENV=dev é no-op e não chama NENHUM endpoint', async () => {

@@ -228,7 +228,13 @@ void main() {
       expect(withdrawalErrorMessage('INSUFFICIENT_BALANCE'), contains('Saldo'));
       expect(withdrawalErrorMessage('BELOW_MINIMUM'), contains('mínimo'));
       expect(withdrawalErrorMessage('COOLDOWN_ACTIVE'), contains('24h'));
-      expect(withdrawalErrorMessage('DAILY_LIMIT_REACHED'), contains('diário'));
+      // Canônico 12.9: cota diária convergiu p/ ANTIFRAUD (mensagem neutra).
+      expect(withdrawalErrorMessage('ANTIFRAUD'),
+          contains('temporariamente indisponíveis'));
+      expect(withdrawalErrorMessage('DAILY_LIMIT_REACHED'),
+          contains('temporariamente indisponíveis'));
+      expect(withdrawalErrorMessage('EMAIL_INVALID'), contains('Destino'));
+      expect(withdrawalErrorMessage('PROVIDER_ERROR'), contains('Provedor'));
       expect(withdrawalErrorMessage('INVALID_EMAIL'), contains('E-mail'));
       expect(withdrawalErrorMessage('EMAIL_NOT_FOUND'), contains('FaucetPay'));
       expect(withdrawalErrorMessage('ACCOUNT_IN_REVIEW'), contains('análise'));

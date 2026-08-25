@@ -469,11 +469,7 @@ const GAMES: Record<string, Record<string, unknown>> = {
 // Dados canônicos v1/v2/v3 de config/payouts + helpers PUROS de merge
 // (unit-testáveis) vivem em core/payoutsUpgrade.ts — fonte ÚNICA usada pelo
 // seed e pelos testes de upgrade idempotente.
-import {
-  PAYOUTS_ASSET_V2,
-  PAYOUTS_V1,
-  buildPayoutsV3Doc,
-} from './core/payoutsUpgrade';
+import { buildPayoutsV4Doc } from './core/payoutsUpgrade';
 
 async function createIfMissing(
   db: ReturnType<typeof initAdmin>['db'],
@@ -562,62 +558,27 @@ async function upgradeMachinesToV2(
 }
 
 /**
- * Upgrade IDEMPOTENTE de config/payouts para v2: doc ausente ⇒ cria já em v2;
- * version < 2 ⇒ MERGE dos campos de conversão em cada ativo existente (por
- * id) + version=2 (nunca remove campos v1). Rodar novamente = no-op.
+ * Upgrade IDEMPOTENTE de config/payouts para o SCHEMA CANÔNICO v4 (12.9):
+ * doc ausente ⇒ cria já em v4; version < 4 OU assets em forma legada ⇒
+ * normaliza (array→mapa, ids UPPER, aliases de campo) e persiste com MERGE
+ * seguro. LTC enabled:true, litoshiPerCoin:100, minWithdrawCoins:20,
+ * feeCoins:2; BTC/DOGE/USDT enabled:false. Rodar novamente = no-op.
  */
-async function upgradePayoutsToV2(
+async function upgradePayoutsToV4(
   db: ReturnType<typeof initAdmin>['db'],
 ): Promise<'created' | 'upgraded' | 'current'> {
   const ref = db.doc('config/payouts');
   const snap = await ref.get();
   if (!snap.exists) {
-    const v1Assets = PAYOUTS_V1.assets as Record<string, unknown>[];
-    await ref.set({
-      ...PAYOUTS_V1,
-      assets: v1Assets.map((a) => ({
-        ...a,
-        ...(typeof a.id === 'string' ? PAYOUTS_ASSET_V2[a.id] : undefined),
-      })),
-      version: 2,
-    });
+    await ref.set(buildPayoutsV4Doc(null));
     return 'created';
   }
-  const version = typeof snap.get('version') === 'number' ? Number(snap.get('version')) : 1;
-  if (version >= 2) return 'current';
-  const existingAssets = Array.isArray(snap.get('assets'))
-    ? (snap.get('assets') as Record<string, unknown>[])
-    : [];
-  const mergedAssets = existingAssets.map((a) => ({
-    ...a,
-    ...(typeof a.id === 'string' ? PAYOUTS_ASSET_V2[a.id] : undefined),
-  }));
-  await ref.set({ assets: mergedAssets, version: 2 }, { merge: true });
-  return 'upgraded';
-}
-
-/**
- * Upgrade IDEMPOTENTE de config/payouts para v3 (saque por E-MAIL FaucetPay):
- * doc ausente ⇒ cria já em v3; version < 3 ⇒ MERGE dos campos v3 por ativo
- * (por id) + metadados destinationType/futureRateSource + version=3. Nunca
- * remove campos v1/v2. Rodar novamente = no-op.
- */
-async function upgradePayoutsToV3(
-  db: ReturnType<typeof initAdmin>['db'],
-): Promise<'created' | 'upgraded' | 'current'> {
-  const ref = db.doc('config/payouts');
-  const snap = await ref.get();
-  if (!snap.exists) {
-    await ref.set(buildPayoutsV3Doc(null));
-    return 'created';
-  }
-  const version = typeof snap.get('version') === 'number' ? Number(snap.get('version')) : 1;
-  if (version >= 3) return 'current';
-  // UPGRADE IDEMPOTENTE a partir de QUALQUER versão anterior (v1/v2):
-  // MERGE dos campos v3 por ativo + metadados + version=3 — nunca remove
-  // campos existentes (set com merge:true).
-  await ref.set(buildPayoutsV3Doc(snap.data() ?? {}), { merge: true });
-  return 'upgraded';
+  const data = (snap.data() ?? {}) as Record<string, unknown>;
+  const version = typeof data.version === 'number' ? Number(data.version) : 1;
+  const legacyShape = !data.assets || Array.isArray(data.assets);
+  if (version >= 4 && !legacyShape) return 'current';
+  await ref.set(buildPayoutsV4Doc(data), { merge: true });
+  return legacyShape || version < 4 ? 'upgraded' : 'current';
 }
 
 async function main(): Promise<void> {
@@ -647,8 +608,7 @@ async function main(): Promise<void> {
   for (const [id, data] of Object.entries(LEAGUES)) {
     console.log(`[seed] leagues/${id}: ${await createIfMissing(db, `leagues/${id}`, data)}`);
   }
-  console.log(`[seed] config/payouts (v2): ${await upgradePayoutsToV2(db)}`);
-  console.log(`[seed] config/payouts (v3): ${await upgradePayoutsToV3(db)}`);
+  console.log(`[seed] config/payouts (v4): ${await upgradePayoutsToV4(db)}`);
   console.log(`[seed] config/ads (v1): ${await createIfMissing(db, 'config/ads', ADS_V1)}`);
   console.log(`[seed] seasons/season-01: ${await createIfMissing(db, 'seasons/season-01', seasonDoc())}`);
   for (const [id, data] of Object.entries(SEASON_MISSIONS)) {
