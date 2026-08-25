@@ -150,7 +150,9 @@ export class FaucetPayProvider implements PayoutProvider, ReadonlyPayoutProvider
       // Códigos seguros COM diagnóstico operacional (status/JSON), nunca dados.
       if (!res.ok) return { ok: false, errorCode: `PROVIDER_HTTP_${res.status}` };
       if (!body) return { ok: false, errorCode: 'PROVIDER_BAD_JSON' };
-      if (body.success !== true) {
+      // Alguns endpoints read-only respondem {message:"OK"} SEM campo success.
+      const isOk = body.success === true || String(body['message'] ?? '') === 'OK';
+      if (!isOk) {
         const raw = String(body['message'] ?? '');
         return { ok: false, errorCode: mapApiError(raw), detailMsg: sanitizeDetail(raw) };
       }
@@ -188,7 +190,8 @@ export class FaucetPayProvider implements PayoutProvider, ReadonlyPayoutProvider
         body = (await res.json().catch(() => null)) as Record<string, unknown> | null;
         if (!res.ok) return { ok: false, errorCode: `PROVIDER_HTTP_${res.status}` };
         if (!body) return { ok: false, errorCode: 'PROVIDER_BAD_JSON' };
-        if (body.success !== true) {
+        const isOk = body.success === true || String(body['message'] ?? '') === 'OK';
+        if (!isOk) {
           const raw = String(body['message'] ?? '');
           return { ok: false, errorCode: mapApiError(raw), detailMsg: sanitizeDetail(raw) };
         }
