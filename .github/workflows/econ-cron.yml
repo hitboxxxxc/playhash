@@ -25,12 +25,14 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: 'run = economic runner | seed = dev seed | devTopUp = crédito de dev (ENV=dev)'
+        description: 'run = economic runner | seed = dev seed | devTopUp = crédito de dev (ENV=dev) | payoutProbe = leitura read-only FaucetPay (ENV=dev) | payoutLiveTest = micro-payout REAL (PAYOUT_MODE=live + inputs)'
         type: choice
         options:
           - run
           - seed
           - devTopUp
+          - payoutProbe
+          - payoutLiveTest
         default: run
         required: true
       uid:
@@ -43,6 +45,21 @@ on:
         type: string
         required: false
         default: '5000'
+      payoutAsset:
+        description: 'payoutLiveTest: ativo (BTC/LTC/DOGE/USDT) — exigido só p/ payoutLiveTest'
+        type: string
+        required: false
+        default: ''
+      payoutAddress:
+        description: 'payoutLiveTest: endereço DO DONO que receberá o micro-payout (nunca logado)'
+        type: string
+        required: false
+        default: ''
+      payoutAmount:
+        description: 'payoutLiveTest: valor decimal no ativo (vazio = providerMin da config/payouts v2)'
+        type: string
+        required: false
+        default: ''
 
 concurrency:
   group: econ-runner
@@ -94,6 +111,34 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && inputs.action == 'seed'
         working-directory: backend
         run: node dist/seed.js
+
+      # payoutProbe: validação READ-ONLY da chave FaucetPay (balance/fees).
+      # GATE no runner: só executa com repo variable ENV=dev. NUNCA envia
+      # payout; nunca imprime a chave (só status válido/inválido + saldos).
+      - name: Payout probe (read-only, ENV=dev only)
+        if: github.event_name == 'workflow_dispatch' && inputs.action == 'payoutProbe'
+        working-directory: backend
+        env:
+          RUNNER_ACTION: payoutProbe
+          APP_ENV: ${{ vars.ENV }}
+          FAUCETPAY_API_KEY: ${{ secrets.FAUCETPAY_API_KEY }}
+        run: node dist/runner.js
+
+      # payoutLiveTest: MICRO-PAYOUT REAL (OPCIONAL; default NÃO executa).
+      # GATE duplo no runner: exige repo variable PAYOUT_MODE=live E inputs
+      # explícitos (asset + endereço do dono + amount). Não reserva saldo de
+      # usuário; auditoria WITHDRAWAL_TEST; falha não derruba o job.
+      - name: Payout live micro-test (PAYOUT_MODE=live only)
+        if: github.event_name == 'workflow_dispatch' && inputs.action == 'payoutLiveTest'
+        working-directory: backend
+        env:
+          RUNNER_ACTION: payoutLiveTest
+          PAYOUT_MODE: ${{ vars.PAYOUT_MODE }}
+          FAUCETPAY_API_KEY: ${{ secrets.FAUCETPAY_API_KEY }}
+          PAYOUT_TEST_ASSET: ${{ inputs.payoutAsset }}
+          PAYOUT_TEST_ADDRESS: ${{ inputs.payoutAddress }}
+          PAYOUT_TEST_AMOUNT: ${{ inputs.payoutAmount }}
+        run: node dist/runner.js
 
       # devTopUp: crédito de saldo de desenvolvimento. GATE no runner:
       # só executa de verdade quando a repo variable ENV == "dev"

@@ -36,3 +36,34 @@ export interface PayoutProvider {
   readonly id: string;
   sendPayout(req: PayoutRequest): Promise<PayoutResult>;
 }
+
+/** Saldo de um ativo na conta do provedor (menor unidade do ativo). */
+export interface ProviderBalanceEntry {
+  asset: string;
+  /** Saldo em menores unidades (ex.: satoshi). BigInt serializado como string. */
+  balanceUnits: bigint;
+}
+
+/** Taxa/mínimo reportado pelo provedor p/ um ativo. */
+export interface ProviderFeeEntry {
+  asset: string;
+  /** Taxa cobrada pelo provedor em menores unidades. */
+  feeUnits: bigint;
+  /** Mínimo aceito pelo provedor em menores unidades (quando informado). */
+  minUnits?: bigint;
+}
+
+export type ProviderReadResult<T> =
+  | { ok: true; data: T }
+  | { ok: false; errorCode: string };
+
+/**
+ * Contrato READ-ONLY opcional (probe): valida a chave e lê saldos/taxas
+ * SEM enviar dinheiro. Nenhuma implementação pode logar credenciais.
+ */
+export interface ReadonlyPayoutProvider {
+  /** Confere se a chave é válida e retorna saldos por ativo. */
+  getBalances(): Promise<ProviderReadResult<ProviderBalanceEntry[]>>;
+  /** Lê taxas (e mínimos quando disponíveis) por ativo. */
+  getFees(): Promise<ProviderReadResult<ProviderFeeEntry[]>>;
+}

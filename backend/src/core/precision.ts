@@ -28,6 +28,29 @@ export interface PowerEntry {
   power: bigint;
 }
 
+/**
+ * Conversão COIN → ativo de payout (config/payouts v2) — AUTORIDADE BACKEND.
+ *
+ * assetUnitPerCoinScaled = quantos MENORES UNIDADES do ativo 1 COIN compra
+ * (ex.: BTC decimals=8 e scaled=25 ⇒ 1 coin = 25 satoshi).
+ *
+ * Regra determinística: ARREDONDAMENTO PARA BAIXO (floor) — a conversão
+ * NUNCA cria valor (o resíduo fica no backend, nunca a favor do usuário).
+ * Aritmética 100% BigInt (proibido float).
+ */
+export function coinToAsset(
+  coinUnits: bigint,
+  assetUnitPerCoinScaled: bigint,
+  coinPrecision: number,
+): bigint {
+  if (coinUnits < 0n) throw new Error('NEGATIVE_COIN_AMOUNT');
+  if (assetUnitPerCoinScaled <= 0n) throw new Error('INVALID_ASSET_RATE');
+  if (!Number.isSafeInteger(coinPrecision) || coinPrecision <= 0) {
+    throw new Error('INVALID_COIN_PRECISION');
+  }
+  return floorDiv(coinUnits * assetUnitPerCoinScaled, BigInt(coinPrecision));
+}
+
 export interface DistributionResult {
   /** reward_i por uid (apenas usuários com reward > 0). */
   rewards: Map<string, bigint>;

@@ -29,7 +29,7 @@
 import { FieldValue, Firestore } from 'firebase-admin/firestore';
 import { ProcessingSummary } from '../core/types';
 import { getEconomyConfig } from '../core/config';
-import { toInt } from '../core/precision';
+import { coinToAsset, toInt } from '../core/precision';
 import { writeAudit, auditEventId } from '../core/audit';
 import { counterKey, utcDayKey } from '../core/ratelimit';
 import {
@@ -47,8 +47,58 @@ export interface PayoutAssetConfig {
   id: string;
   network: string;
   enabled: boolean;
+  /** Mínimo de saque em UNITS de coin (v1). */
   minWithdrawUnits: bigint;
+  /** Taxa da PLATAFORMA em units de coin (v1; descontada do saldo). */
   feeUnits: bigint;
+  // ---- v2: conversão explícita COIN→ativo (autoridade backend) ----------
+  /** Casas decimais do ativo (BTC/LTC/DOGE=8, USDT=6). */
+  assetDecimals: number;
+  /** Menores unidades do ativo que 1 COIN compra (escala inteira). */
+  assetUnitPerCoinScaled: bigint;
+  /** Mínimo REAL aceito pelo provedor em menores unidades do ativo. */
+  providerMinAssetUnits: bigint;
+  /** Taxa do PROVEDOR em menores unidades do ativo. */
+  providerFeeAssetUnits: bigint;
+}
+
+/** Resultado da conversão explícita COIN→ativo (pura, determinística). */
+export interface CoinToAssetConversion {
+  /** Bruto convertido: coins × assetUnitPerCoin (floor). */
+  grossAssetUnits: bigint;
+  /** Recebido pelo usuário: gross − providerFee. */
+  receivedAssetUnits: bigint;
+}
+
+/**
+ * ÚNICO ponto de conversão COIN→ativo do sistema.
+ * Regra: receivedAsset = coins × assetUnitPerCoin − providerFee (floor).
+ * Retorna null quando o ativo não tem conversão configurada (v1 legado).
+ */
+export function convertCoinToAsset(
+  amountUnits: bigint,
+  cfg: PayoutAssetConfig,
+): CoinToAssetConversion | null {
+  if (!cfg.assetUnitPerCoinScaled) return null;
+  const gross = coinToAsset(amountUnits, cfg.assetUnitPerCoinScaled, COIN_PRECISION_UNITS);
+  const received = gross - cfg.providerFeeAssetUnits;
+  return { grossAssetUnits: gross, receivedAssetUnits: received < 0n ? 0n : received };
+}
+
+/**
+ * Validação v2 contra a realidade do PROVEDOR: o bruto convertido precisa
+ * cobrir mínimo real + taxa do provedor. Código seguro BELOW_PROVIDER_MIN
+ * (NÃO conta como falha de elegibilidade p/ lock 'review').
+ */
+export function validateProviderMinimum(
+  conversion: CoinToAssetConversion,
+  cfg: PayoutAssetConfig,
+): WithdrawalValidation {
+  const required = cfg.providerMinAssetUnits + cfg.providerFeeAssetUnits;
+  if (conversion.grossAssetUnits < required) {
+    return { ok: false, failureCode: 'BELOW_PROVIDER_MIN' };
+  }
+  return { ok: true };
 }
 
 export interface PayoutsConfig {
@@ -60,6 +110,9 @@ export interface PayoutsConfig {
   coinPrecision: number;
   version: number;
 }
+
+/** 1 coin = 1e6 units (coinPrecision da config/economy). */
+const COIN_PRECISION_UNITS = 1_000_000;
 
 const DEFAULT_PAYOUTS: PayoutsConfig = {
   assets: [],
@@ -86,6 +139,10 @@ export async function getPayoutsConfig(db: Firestore): Promise<PayoutsConfig> {
       enabled: a.enabled === true,
       minWithdrawUnits: toInt((a.minWithdrawUnits ?? 0) as number | string),
       feeUnits: toInt((a.feeUnits ?? 0) as number | string),
+      assetDecimals: Number(a.assetDecimals ?? 8),
+      assetUnitPerCoinScaled: toInt((a.assetUnitPerCoinScaled ?? 0) as number | string),
+      providerMinAssetUnits: toInt((a.providerMinAssetUnits ?? 0) as number | string),
+      providerFeeAssetUnits: toInt((a.providerFeeAssetUnits ?? 0) as number | string),
     }));
   return {
     assets,
@@ -413,6 +470,7 @@ async function reserveWithdrawal(
   intent: WithdrawalIntent,
   feeUnits: bigint,
   ruleVersion: number,
+  conversion?: CoinToAssetConversion,
 ): Promise<'reserved' | 'insufficient'> {
   const withdrawalRef = db.doc(`withdrawals/${intent.clientRequestId}`);
   const outcome = await db.runTransaction(async (tx) => {
@@ -443,6 +501,13 @@ async function reserveWithdrawal(
       amountUnits: intent.amountUnits.toString(),
       feeUnits: feeUnits.toString(),
       receivedUnits: (intent.amountUnits - feeUnits).toString(),
+      // Conversão explícita COIN→ativo (v2): bruto e recebido no ativo.
+      ...(conversion
+        ? {
+            grossAssetUnits: conversion.grossAssetUnits.toString(),
+            receivedAssetUnits: conversion.receivedAssetUnits.toString(),
+          }
+        : {}),
       address: intent.address, // SOMENTE leitura owner (rules); nunca em logs
       addressMasked: intent.addressMasked,
       status: 'processing',
@@ -702,12 +767,28 @@ async function handleIntent(
       return await failBeforeReserve(db, intent, validation.failureCode, ruleVersion, nowMs);
     }
 
+    // ---- Conversão explícita COIN→ativo (v2) ------------------------------
+    // Helper ÚNICO; valida contra mínimo real + taxa do PROVEDOR ANTES de
+    // reservar (falha aqui = estorno desnecessário — nada foi debitado).
+    let conversion: CoinToAssetConversion | undefined;
+    if (assetCfg) {
+      const conv = convertCoinToAsset(intent.amountUnits, assetCfg);
+      if (conv) {
+        const providerCheck = validateProviderMinimum(conv, assetCfg);
+        if (!providerCheck.ok) {
+          return await failBeforeReserve(db, intent, providerCheck.failureCode, ruleVersion, nowMs);
+        }
+        conversion = conv;
+      }
+    }
+
     // ---- RESERVA ----------------------------------------------------------
     const reserved = await reserveWithdrawal(
       db,
       intent,
       assetCfg?.feeUnits ?? 0n,
       ruleVersion,
+      conversion,
     );
     if (reserved === 'insufficient') {
       return await failBeforeReserve(db, intent, 'INSUFFICIENT_BALANCE', ruleVersion, nowMs);

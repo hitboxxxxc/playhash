@@ -491,6 +491,48 @@ const PAYOUTS_V1: Record<string, unknown> = {
   version: 1,
 };
 
+/**
+ * Campos v2 de CONVERSÃO EXPLÍCITA COIN→ativo por ativo (config/payouts
+ * version 2). Autoridade backend; premissas conservadoras e AJUSTÁVEIS:
+ *  - assetUnitPerCoinScaled: menores unidades do ativo que 1 COIN compra
+ *    (ex.: DOGE 200_000_000 com 8 decimais ⇒ 1 coin = 2 DOGE; BTC 25 sat).
+ *  - providerMinAssetUnits / providerFeeAssetUnits: mínimo REAL e taxa da
+ *    FaucetPay em menores unidades (probe payoutProbe confirma na prática).
+ *  - minWithdrawUnits realinhado para garantir gross ≥ providerMin + fee.
+ * Regra do processador: receivedAsset = coins × unitPerCoin − providerFee;
+ * validação: gross ≥ providerMin + providerFee (senão BELOW_PROVIDER_MIN).
+ */
+const PAYOUTS_ASSET_V2: Record<string, Record<string, unknown>> = {
+  BTC: {
+    assetDecimals: 8,
+    assetUnitPerCoinScaled: 25, // 1 coin = 25 sat (premissa conservadora)
+    providerMinAssetUnits: 10_000, // 0.0001 BTC
+    providerFeeAssetUnits: 500,
+    minWithdrawUnits: 450_000_000, // 450 coins ⇒ 11_250 sat bruto
+  },
+  LTC: {
+    assetDecimals: 8,
+    assetUnitPerCoinScaled: 2_000, // 1 coin = 0.00002 LTC
+    providerMinAssetUnits: 100_000, // 0.001 LTC
+    providerFeeAssetUnits: 5_000,
+    minWithdrawUnits: 60_000_000, // 60 coins ⇒ 120_000 litoshi bruto
+  },
+  DOGE: {
+    assetDecimals: 8,
+    assetUnitPerCoinScaled: 2_000_000, // 1 coin = 0.02 DOGE (unitPerCoin maior)
+    providerMinAssetUnits: 500_000_000, // 5 DOGE
+    providerFeeAssetUnits: 50_000_000, // 0.5 DOGE
+    minWithdrawUnits: 300_000_000, // 300 coins ⇒ 6 DOGE bruto
+  },
+  USDT: {
+    assetDecimals: 6,
+    assetUnitPerCoinScaled: 5_000, // 1 coin = 0.005 USDT
+    providerMinAssetUnits: 5_000_000, // 5 USDT (TRC20)
+    providerFeeAssetUnits: 1_000_000, // 1 USDT
+    minWithdrawUnits: 1_300_000_000, // 1300 coins ⇒ 6.5 USDT bruto
+  },
+};
+
 async function createIfMissing(
   db: ReturnType<typeof initAdmin>['db'],
   docPath: string,
@@ -577,6 +619,41 @@ async function upgradeMachinesToV2(
   return 'current';
 }
 
+/**
+ * Upgrade IDEMPOTENTE de config/payouts para v2: doc ausente ⇒ cria já em v2;
+ * version < 2 ⇒ MERGE dos campos de conversão em cada ativo existente (por
+ * id) + version=2 (nunca remove campos v1). Rodar novamente = no-op.
+ */
+async function upgradePayoutsToV2(
+  db: ReturnType<typeof initAdmin>['db'],
+): Promise<'created' | 'upgraded' | 'current'> {
+  const ref = db.doc('config/payouts');
+  const snap = await ref.get();
+  if (!snap.exists) {
+    const v1Assets = PAYOUTS_V1.assets as Record<string, unknown>[];
+    await ref.set({
+      ...PAYOUTS_V1,
+      assets: v1Assets.map((a) => ({
+        ...a,
+        ...(typeof a.id === 'string' ? PAYOUTS_ASSET_V2[a.id] : undefined),
+      })),
+      version: 2,
+    });
+    return 'created';
+  }
+  const version = typeof snap.get('version') === 'number' ? Number(snap.get('version')) : 1;
+  if (version >= 2) return 'current';
+  const existingAssets = Array.isArray(snap.get('assets'))
+    ? (snap.get('assets') as Record<string, unknown>[])
+    : [];
+  const mergedAssets = existingAssets.map((a) => ({
+    ...a,
+    ...(typeof a.id === 'string' ? PAYOUTS_ASSET_V2[a.id] : undefined),
+  }));
+  await ref.set({ assets: mergedAssets, version: 2 }, { merge: true });
+  return 'upgraded';
+}
+
 async function main(): Promise<void> {
   if (process.env.NODE_ENV === 'production') {
     throw new Error('SEED_BLOCKED_IN_PRODUCTION');
@@ -604,7 +681,7 @@ async function main(): Promise<void> {
   for (const [id, data] of Object.entries(LEAGUES)) {
     console.log(`[seed] leagues/${id}: ${await createIfMissing(db, `leagues/${id}`, data)}`);
   }
-  console.log(`[seed] config/payouts (v1): ${await createIfMissing(db, 'config/payouts', PAYOUTS_V1)}`);
+  console.log(`[seed] config/payouts (v2): ${await upgradePayoutsToV2(db)}`);
   console.log(`[seed] config/ads (v1): ${await createIfMissing(db, 'config/ads', ADS_V1)}`);
   console.log(`[seed] seasons/season-01: ${await createIfMissing(db, 'seasons/season-01', seasonDoc())}`);
   for (const [id, data] of Object.entries(SEASON_MISSIONS)) {

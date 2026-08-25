@@ -159,6 +159,8 @@ export type AuditEventType =
   | 'WITHDRAWAL_RESERVED'
   | 'WITHDRAWAL_COMPLETED'
   | 'WITHDRAWAL_FAILED'
+  // Micro-teste live opcional (payoutLiveTest; NÃO reserva saldo de usuário).
+  | 'WITHDRAWAL_TEST'
   | 'REWARD_REVERSED'
   | 'ACCOUNT_ECONOMIC_LOCK';
 

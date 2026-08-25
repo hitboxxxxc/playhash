@@ -7,8 +7,10 @@
 import {
   ELIGIBILITY_FAILURE_CODES,
   WithdrawalValidationInput,
+  convertCoinToAsset,
   isValidAddressForNetwork,
   maskAddress,
+  validateProviderMinimum,
   validateWithdrawal,
 } from '../processors/processWithdrawals';
 import { getPayoutProvider } from '../processors/processWithdrawals';
@@ -274,5 +276,31 @@ describe('antifraude: códigos de elegibilidade (§36)', () => {
     expect(ELIGIBILITY_FAILURE_CODES.has('INVALID_ADDRESS')).toBe(false);
     expect(ELIGIBILITY_FAILURE_CODES.has('BELOW_MINIMUM')).toBe(false);
     expect(ELIGIBILITY_FAILURE_CODES.has('ASSET_DISABLED')).toBe(false);
+  });
+});
+
+describe('conversão v2 integrada à validação de saques', () => {
+  const DOGE_CFG = {
+    id: 'DOGE',
+    network: 'Dogecoin',
+    enabled: true,
+    minWithdrawUnits: 300_000_000n,
+    feeUnits: 2_000_000n,
+    assetDecimals: 8,
+    assetUnitPerCoinScaled: 2_000_000n, // 1 coin = 0.02 DOGE
+    providerMinAssetUnits: 500_000_000n, // 5 DOGE
+    providerFeeAssetUnits: 50_000_000n, // 0.5 DOGE
+  };
+
+  it('BELOW_PROVIDER_MIN é código operacional: NÃO conta p/ lock review', () => {
+    expect(ELIGIBILITY_FAILURE_CODES.has('BELOW_PROVIDER_MIN')).toBe(false);
+  });
+
+  it('saque no mínimo da plataforma passa na validação do provedor', () => {
+    const conv = convertCoinToAsset(DOGE_CFG.minWithdrawUnits, DOGE_CFG)!;
+    expect(validateProviderMinimum(conv, DOGE_CFG)).toEqual({ ok: true });
+    // Estorno íntegro: nada foi debitado quando a validação falha ANTES da reserva.
+    expect(conv.grossAssetUnits).toBe(600_000_000n);
+    expect(conv.receivedAssetUnits).toBe(550_000_000n);
   });
 });

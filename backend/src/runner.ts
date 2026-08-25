@@ -18,11 +18,17 @@ import { processClaims } from './processors/processClaims';
 import { closeBlocks } from './processors/closeBlocks';
 import { leagueSweep } from './processors/league_sweep';
 import { processSeasonProgress } from './processors/season_progress';
-import { processWithdrawals } from './processors/processWithdrawals';
+import {
+  processWithdrawals,
+  getPayoutsConfig,
+  maskAddress,
+  PayoutAssetConfig,
+} from './processors/processWithdrawals';
 import { getEconomyConfig } from './core/config';
 import { toInt } from './core/precision';
 import { writeAudit, auditEventId } from './core/audit';
 import { utcDayKey } from './core/ratelimit';
+import { FaucetPayProvider, decimalToUnits } from './providers/faucetpay_provider';
 
 type Processor = { name: string; run: (db: Firestore) => Promise<unknown> };
 
@@ -114,6 +120,146 @@ export async function runDevTopUp(
   return { credited: true, amountUnits };
 }
 
+/**
+ * payoutProbe — VALIDAÇÃO READ-ONLY da integração FaucetPay.
+ * Chama SOMENTE endpoints de leitura (balance/fees) com o secret; NUNCA
+ * envia payout e NUNCA loga a chave. Gate: exige ENV=dev (repo variable);
+ * qualquer PAYOUT_MODE é aceito (probe não depende do modo).
+ */
+export async function runPayoutProbe(
+  _db: Firestore,
+  opts: { env: string },
+): Promise<{ executed: boolean; keyValid?: boolean }> {
+  if (opts.env !== 'dev') {
+    console.log(
+      `[runner] payoutProbe SKIP: requer repo variable ENV=dev (atual='${opts.env}'). Nada foi executado.`,
+    );
+    return { executed: false };
+  }
+  let provider: FaucetPayProvider;
+  try {
+    provider = new FaucetPayProvider();
+  } catch (err) {
+    console.error(`[runner] payoutProbe FAILED=${sanitize(err)}`);
+    return { executed: true, keyValid: false };
+  }
+
+  const balances = await provider.getBalances();
+  if (!balances.ok) {
+    console.error(`[runner] payoutProbe balance FAILED=${balances.errorCode}`);
+    return { executed: true, keyValid: balances.errorCode !== 'INVALID_CREDENTIALS' };
+  }
+  console.log('[runner] payoutProbe key=VALID');
+  for (const b of balances.data) {
+    console.log(`[runner] payoutProbe balance asset=${b.asset} units=${b.balanceUnits}`);
+  }
+
+  const fees = await provider.getFees();
+  if (!fees.ok) {
+    // Taxas são best-effort: saldo já provou a chave; não falha o probe.
+    console.log(`[runner] payoutProbe fees UNAVAILABLE=${fees.errorCode}`);
+  } else {
+    for (const f of fees.data) {
+      const min = f.minUnits !== undefined ? ` min=${f.minUnits}` : '';
+      console.log(`[runner] payoutProbe fee asset=${f.asset} feeUnits=${f.feeUnits}${min}`);
+    }
+  }
+  return { executed: true, keyValid: true };
+}
+
+export interface PayoutLiveTestOptions {
+  payoutMode: string;
+  asset: string;
+  address: string;
+  /** Valor DECIMAL em unidades inteiras do ativo (ex.: "0.0001"). Vazio ⇒ usa providerMin da config. */
+  amountDecimal: string;
+}
+
+/**
+ * payoutLiveTest — MICRO-TESTE REAL (OPCIONAL, default NÃO executa).
+ * Exige PAYOUT_MODE=live + inputs explícitos (asset/endereço do DONO/amount).
+ * NÃO reserva saldo de usuário (usa a conta do provedor); auditoria
+ * WITHDRAWAL_TEST; falha ⇒ log seguro, sem crash, sem estorno.
+ */
+export async function runPayoutLiveTest(
+  db: Firestore,
+  opts: PayoutLiveTestOptions,
+): Promise<{ executed: boolean; status?: string; providerReference?: string }> {
+  const mode = opts.payoutMode.trim().toLowerCase();
+  if (mode !== 'live') {
+    console.log(
+      `[runner] payoutLiveTest SKIP: requer repo variable PAYOUT_MODE=live (atual='${mode || 'test'}'). Nada foi enviado.`,
+    );
+    return { executed: false };
+  }
+  if (!opts.asset || !opts.address) {
+    console.error('[runner] payoutLiveTest FAILED=PAYOUT_TEST_INPUTS_MISSING');
+    return { executed: false };
+  }
+
+  // Decimais + mínimo real vêm da config/payouts v2 (autoridade backend).
+  const payouts = await getPayoutsConfig(db);
+  const cfg: PayoutAssetConfig | undefined = payouts.assets.find((a) => a.id === opts.asset);
+  const decimals = cfg?.assetDecimals ?? 8;
+  let amountUnits: bigint | null;
+  if (opts.amountDecimal.trim()) {
+    amountUnits = decimalToUnits(opts.amountDecimal, decimals);
+  } else {
+    amountUnits = cfg && cfg.providerMinAssetUnits > 0n ? cfg.providerMinAssetUnits : null;
+  }
+  if (amountUnits === null || amountUnits <= 0n) {
+    console.error('[runner] payoutLiveTest FAILED=INVALID_AMOUNT');
+    return { executed: false };
+  }
+
+  let provider: FaucetPayProvider;
+  try {
+    provider = new FaucetPayProvider();
+  } catch (err) {
+    console.error(`[runner] payoutLiveTest FAILED=${sanitize(err)}`);
+    return { executed: false };
+  }
+
+  const referenceId = `livetest-${Date.now()}`;
+  try {
+    const result = await provider.sendPayout({
+      asset: opts.asset,
+      network: cfg?.network ?? '',
+      address: opts.address,
+      amountUnits,
+    });
+    await writeAudit(db, {
+      eventId: auditEventId('WITHDRAWAL_TEST', referenceId),
+      userId: 'owner',
+      type: 'WITHDRAWAL_TEST',
+      referenceId,
+      origin: 'runner.payoutLiveTest',
+      ruleVersion: payouts.version,
+      status: result.status === 'completed' ? 'SUCCESS' : 'FAILED',
+      detail: {
+        asset: opts.asset,
+        amountUnits: amountUnits.toString(),
+        errorCode: result.errorCode,
+        providerReference: result.providerReference,
+        addressMasked: maskAddress(opts.address),
+        payoutSimulated: false,
+      },
+    });
+    if (result.status === 'completed') {
+      console.log(
+        `[runner] payoutLiveTest completed ref=${result.providerReference} addr=<masked>`,
+      );
+      return { executed: true, status: 'completed', providerReference: result.providerReference };
+    }
+    console.error(`[runner] payoutLiveTest failed code=${result.errorCode ?? 'PROVIDER_ERROR'}`);
+    return { executed: true, status: 'failed' };
+  } catch (err) {
+    // Nunca crasha: log seguro e saída controlada.
+    console.error(`[runner] payoutLiveTest FAILED=${sanitize(err)}`);
+    return { executed: true, status: 'failed' };
+  }
+}
+
 async function main(): Promise<void> {
   const startedAt = Date.now();
   const { db, projectId } = initAdmin();
@@ -135,6 +281,38 @@ async function main(): Promise<void> {
       console.error(`[runner] devTopUp FAILED=${sanitize(err)}`);
       process.exitCode = 1;
     }
+    return;
+  }
+
+  if (action === 'payoutProbe') {
+    try {
+      await runPayoutProbe(db, {
+        env: String(process.env.APP_ENV ?? '').trim().toLowerCase(),
+      });
+      console.log(`[runner] done in ${Date.now() - startedAt}ms`);
+      process.exitCode = 0;
+    } catch (err) {
+      console.error(`[runner] payoutProbe FAILED=${sanitize(err)}`);
+      process.exitCode = 1;
+    }
+    return;
+  }
+
+  if (action === 'payoutLiveTest') {
+    try {
+      await runPayoutLiveTest(db, {
+        payoutMode: String(process.env.PAYOUT_MODE ?? 'test'),
+        asset: String(process.env.PAYOUT_TEST_ASSET ?? '').trim().toUpperCase(),
+        address: String(process.env.PAYOUT_TEST_ADDRESS ?? '').trim(),
+        amountDecimal: String(process.env.PAYOUT_TEST_AMOUNT ?? '').trim(),
+      });
+      // Falha do micro-teste NÃO derruba o job (sem crash); auditoria registra.
+      process.exitCode = 0;
+    } catch (err) {
+      console.error(`[runner] payoutLiveTest FAILED=${sanitize(err)}`);
+      process.exitCode = 1;
+    }
+    console.log(`[runner] done in ${Date.now() - startedAt}ms`);
     return;
   }
 
