@@ -141,30 +141,62 @@ describe('payoutProbe (read-only; NUNCA envia payout)', () => {
     }) as unknown as typeof fetch;
   }
 
+  /** Stub mínimo de Firestore p/ getPayoutsConfig (config/payouts v2). */
+  function fakeDb(assets: unknown[]) {
+    const snap = {
+      exists: true,
+      data: () => ({ assets, version: 2 }),
+      get: (field: string) => (field === 'assets' ? assets : field === 'version' ? 2 : undefined),
+    };
+    return { doc: () => ({ get: async () => snap }) } as never;
+  }
+
+  const CONFIG_ASSETS = [
+    { id: 'BTC', network: 'Bitcoin', enabled: true, assetDecimals: 8 },
+    { id: 'DOGE', network: 'Dogecoin', enabled: true, assetDecimals: 8 },
+  ];
+
   it('fora de ENV=dev é no-op e não chama NENHUM endpoint', async () => {
     const fetchMock = fakeFetch([], []);
     global.fetch = fetchMock as typeof fetch;
-    const result = await runPayoutProbe({} as never, { env: 'prod' });
+    const result = await runPayoutProbe(fakeDb([]), { env: 'prod' });
     expect(result.executed).toBe(false);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('chama SOMENTE endpoints balance/fees — jamais o send', async () => {
+  it('chama SOMENTE endpoints balance/fees (1 por ativo) — jamais o send', async () => {
     process.env.FAUCETPAY_API_KEY = 'test-key-never-log';
     const urls: string[] = [];
     global.fetch = fakeFetch(urls, [
-      { success: true, balances: { BTC: '0.0001', DOGE: '12.5' } },
+      // Resposta POR MOEDA da FaucetPay (uma chamada por ativo habilitado).
+      { success: true, currency: 'BTC', balance: '0.00010000', balance_satoshi: 10_000 },
+      { success: true, currency: 'DOGE', balance: '12.5', balance_satoshi: 1_250_000_000 },
       { success: true, fees: { BTC: '0.000005' } },
     ]) as typeof fetch;
 
-    const result = await runPayoutProbe({} as never, { env: 'dev' });
+    const result = await runPayoutProbe(fakeDb(CONFIG_ASSETS), { env: 'dev' });
     expect(result.executed).toBe(true);
     expect(result.keyValid).toBe(true);
-    expect(urls.length).toBe(2);
+    expect(urls.length).toBe(3); // 2 saldos + 1 fees
     for (const u of urls) {
       expect(u).toMatch(/^https:\/\/faucetpay\.io\/api\/v1\/(balance|fees)$/);
       expect(u).not.toContain('send');
     }
+  });
+
+  it('saldo usa o campo inteiro do provedor quando presente', async () => {
+    process.env.FAUCETPAY_API_KEY = 'test-key-never-log';
+    global.fetch = fakeFetch([], [
+      { success: true, currency: 'BTC', balance: '0.00010000', balance_satoshi: 10_000 },
+      { success: true, fees: {} },
+    ]) as typeof fetch;
+    const logSpy = jest.spyOn(console, 'log').mockImplementation(() => undefined);
+    await runPayoutProbe(fakeDb([CONFIG_ASSETS[0]]), { env: 'dev' });
+    const balanceLine = logSpy.mock.calls
+      .map((c) => String(c[0]))
+      .find((l) => l.includes('payoutProbe balance asset=BTC'));
+    expect(balanceLine).toContain('units=10000');
+    logSpy.mockRestore();
   });
 
   it('chave inválida ⇒ erro seguro INVALID_CREDENTIALS, sem crash', async () => {
@@ -174,14 +206,14 @@ describe('payoutProbe (read-only; NUNCA envia payout)', () => {
         status: 200,
       }),
     ) as unknown as typeof fetch;
-    const result = await runPayoutProbe({} as never, { env: 'dev' });
+    const result = await runPayoutProbe(fakeDb(CONFIG_ASSETS), { env: 'dev' });
     expect(result.executed).toBe(true);
     expect(result.keyValid).toBe(false);
   });
 
   it('secret ausente ⇒ falha segura FAUCETPAY_API_KEY_MISSING', async () => {
     delete process.env.FAUCETPAY_API_KEY;
-    const result = await runPayoutProbe({} as never, { env: 'dev' });
+    const result = await runPayoutProbe(fakeDb(CONFIG_ASSETS), { env: 'dev' });
     expect(result.executed).toBe(true);
     expect(result.keyValid).toBe(false);
   });

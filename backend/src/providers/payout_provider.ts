@@ -37,6 +37,12 @@ export interface PayoutProvider {
   sendPayout(req: PayoutRequest): Promise<PayoutResult>;
 }
 
+/** Ativo a consultar no provedor (decimais vêm da config/payouts v2). */
+export interface ProviderAssetQuery {
+  id: string;
+  decimals: number;
+}
+
 /** Saldo de um ativo na conta do provedor (menor unidade do ativo). */
 export interface ProviderBalanceEntry {
   asset: string;
@@ -62,8 +68,11 @@ export type ProviderReadResult<T> =
  * SEM enviar dinheiro. Nenhuma implementação pode logar credenciais.
  */
 export interface ReadonlyPayoutProvider {
-  /** Confere se a chave é válida e retorna saldos por ativo. */
-  getBalances(): Promise<ProviderReadResult<ProviderBalanceEntry[]>>;
+  /**
+   * Confere se a chave é válida e retorna saldos dos ativos informados
+   * (consulta READ-ONLY por ativo; nunca envia dinheiro).
+   */
+  getBalances(assets: ProviderAssetQuery[]): Promise<ProviderReadResult<ProviderBalanceEntry[]>>;
   /** Lê taxas (e mínimos quando disponíveis) por ativo. */
   getFees(): Promise<ProviderReadResult<ProviderFeeEntry[]>>;
 }

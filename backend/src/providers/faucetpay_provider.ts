@@ -15,6 +15,7 @@ import {
   PayoutProvider,
   PayoutRequest,
   PayoutResult,
+  ProviderAssetQuery,
   ReadonlyPayoutProvider,
   ProviderBalanceEntry,
   ProviderFeeEntry,
@@ -151,20 +152,48 @@ export class FaucetPayProvider implements PayoutProvider, ReadonlyPayoutProvider
   }
 
   /**
-   * Saldos por ativo (menores unidades). Resposta da FaucetPay:
-   * { success, balances: { BTC: "0.0001", ... }, balance_currency: ... }.
-   * Converte decimal → menor unidade com BigInt puro (sem float).
+   * Saldos por ativo (menores unidades). A FaucetPay responde POR MOEDA:
+   * { success, currency, balance: "0.0001", balance_satoshi: 10000 }.
+   * Uma chamada READ-ONLY por ativo habilitado (decimais da config v2).
+   * Converte decimal → menor unidade com BigInt puro (sem float); valor
+   * inesperado ⇒ ativo ignorado (nunca inventa saldo).
    */
-  async getBalances(): Promise<ProviderReadResult<ProviderBalanceEntry[]>> {
-    const result = await this.postReadonly(FAUCETPAY_BALANCE_URL);
-    if (!result.ok) return result;
-    const raw = result.data['balances'];
-    if (!raw || typeof raw !== 'object') return { ok: false, errorCode: 'PROVIDER_ERROR' };
+  async getBalances(
+    assets: ProviderAssetQuery[],
+  ): Promise<ProviderReadResult<ProviderBalanceEntry[]>> {
     const entries: ProviderBalanceEntry[] = [];
-    for (const [asset, value] of Object.entries(raw as Record<string, unknown>)) {
-      const units = decimalToUnits(String(value ?? '0'));
-      if (units === null) continue; // valor inesperado ⇒ ignora ativo (nunca inventa)
-      entries.push({ asset, balanceUnits: units });
+    for (const asset of assets) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+      let body: Record<string, unknown> | null;
+      try {
+        const res = await fetch(FAUCETPAY_BALANCE_URL, {
+          method: 'POST',
+          headers: { 'content-type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ api_key: this.apiKey, currency: asset.id }),
+          signal: controller.signal,
+        });
+        body = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+        if (!res.ok || !body || body.success !== true) {
+          return {
+            ok: false,
+            errorCode: mapApiError(String(body?.['message'] ?? '')),
+          };
+        }
+      } catch (err) {
+        const aborted = err instanceof Error && err.name === 'AbortError';
+        return { ok: false, errorCode: aborted ? 'PROVIDER_TIMEOUT' : 'PROVIDER_NETWORK' };
+      } finally {
+        clearTimeout(timer);
+      }
+      // Preferir campo inteiro do provedor; fallback: decimal × decimais.
+      const satoshi = Number(body['balance_satoshi'] ?? NaN);
+      const units =
+        Number.isSafeInteger(satoshi) && satoshi >= 0
+          ? BigInt(satoshi)
+          : decimalToUnits(String(body['balance'] ?? ''), asset.decimals);
+      if (units === null || units < 0n) continue;
+      entries.push({ asset: String(body['currency'] ?? asset.id), balanceUnits: units });
     }
     return { ok: true, data: entries };
   }

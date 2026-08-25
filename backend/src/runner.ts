@@ -127,7 +127,7 @@ export async function runDevTopUp(
  * qualquer PAYOUT_MODE é aceito (probe não depende do modo).
  */
 export async function runPayoutProbe(
-  _db: Firestore,
+  db: Firestore,
   opts: { env: string },
 ): Promise<{ executed: boolean; keyValid?: boolean }> {
   if (opts.env !== 'dev') {
@@ -144,7 +144,13 @@ export async function runPayoutProbe(
     return { executed: true, keyValid: false };
   }
 
-  const balances = await provider.getBalances();
+  // Ativos habilitados + decimais vêm da config/payouts (autoridade backend).
+  const payouts = await getPayoutsConfig(db);
+  const queries = payouts.assets
+    .filter((a) => a.enabled)
+    .map((a) => ({ id: a.id, decimals: a.assetDecimals }));
+
+  const balances = await provider.getBalances(queries);
   if (!balances.ok) {
     console.error(`[runner] payoutProbe balance FAILED=${balances.errorCode}`);
     return { executed: true, keyValid: balances.errorCode !== 'INVALID_CREDENTIALS' };
