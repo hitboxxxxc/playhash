@@ -26,8 +26,15 @@ service cloud.firestore {
         && ts <= request.time + duration.value(120, 's');
     }
 
+    // Dia UTC com ZERO-PAD — ALINHADO com o backend (ratelimit.utcDayKey =
+    // ISO 'yyyy-MM-dd'). Antes as chaves nunca batiam ('2026-8-25' vs
+    // '2026-08-25'), tornando o gate de cota inoperante.
+    function padded2(n) {
+      return n < 10 ? '0' + n : '' + n;
+    }
+
     function dayKey() {
-      return '' + request.time.year() + '-' + request.time.month() + '-' + request.time.day();
+      return '' + request.time.year() + '-' + padded2(request.time.month()) + '-' + padded2(request.time.day());
     }
 
     // Teto de score do game: usa configuration.maxScore quando o game o define
@@ -52,11 +59,16 @@ service cloud.firestore {
     }
 
     // Cota diária de intenções (contador mantido PELO BACKEND em rateLimits/{uid}).
-    // Doc ausente => primeira intenção do dia é permitida; o backend passa a
-    // incrementar a partir daí. Janela de corrida aceitável (documentada).
+    // Doc ausente OU chave do dia ausente => permitido (o backend passa a
+    // incrementar a partir daí). CORREÇÃO 12.8: acesso a chave INEXISTENTE de
+    // map nas rules retorna ERRO (não null) — antes, qualquer usuário com doc
+    // rateLimits criado por OUTRO contador (sessions/claims) recebia
+    // PERMISSION_DENIED em TODA criação de intent (gate falso "bloqueado pela
+    // configuração do servidor"). Checar `in` ANTES de comparar.
     function dailyQuotaOk(uid, prefix, limit) {
       let k = prefix + '_' + dayKey();
       return !exists(/databases/$(database)/documents/rateLimits/$(uid))
+        || !(k in get(/databases/$(database)/documents/rateLimits/$(uid)).data)
         || get(/databases/$(database)/documents/rateLimits/$(uid)).data[k] < limit;
     }
 

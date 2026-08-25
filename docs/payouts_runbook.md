@@ -125,10 +125,28 @@ andamento — acompanhar até zerar pendências antes/depois do rollback.
   envio interno (`fees UNAVAILABLE=PROVIDER_ERROR` no probe de 2026-08-25;
   chave VÁLIDA, saldo LTC presente). O mínimo da plataforma (20 COIN) é a
   barreira ativa; erro tipado `BELOW_MIN` cobre rejeição do provedor.
-- **PENDÊNCIA (ação humana)**: publicar as rules v3
-  (`firebase deploy --only firestore:rules --project playhash-70742` com conta
-  autorizada — conta local e service account receberam 403 IAM). Enquanto não
-  publicadas, intents v3 recebem PERMISSION_DENIED no cliente.
+- **CORREÇÃO 12.8 (2026-08-25) — causa raiz do "bloqueado pela configuração
+  do servidor"**: o gate `dailyQuotaOk` das rules negava a CRIAÇÃO de
+  withdrawalIntents para qualquer usuário com doc `rateLimits/{uid}` criado por
+  OUTRO contador (`sessions_*`/`claims_*`): acesso a chave INEXISTENTE de map
+  nas rules retorna ERRO (não null) ⇒ PERMISSION_DENIED. Agravante: `dayKey`
+  das rules era sem zero-pad ('2026-8-25') vs backend ISO padded
+  ('2026-08-25'). Fix em `firestore.rules`: guard `!(k in data)` + dayKey
+  zero-padded alinhado ao backend. **PENDÊNCIA (ação humana)**: publicar as
+  rules corrigidas (`firebase deploy --only firestore:rules --project
+  playhash-70742` com conta autorizada — conta local e service account
+  receberam 403 IAM). Enquanto não publicadas, intents continuam recebendo
+  PERMISSION_DENIED no cliente.
+- **Blindagens 12.8 no processador** (`processWithdrawals.ts`): ids de ativo
+  normalizados (`normalizeAssetId`, 'ltc' ⇒ 'LTC'); gate por modo
+  (`validateProviderMinForMode`): test + providerMinLitoshi null ⇒ passa
+  (default seguro documentado), live + null ⇒ BELOW_PROVIDER_MIN até o probe
+  gravar o mínimo real. Upgrade idempotente v1/v2→v3 extraído p/
+  `core/payoutsUpgrade.ts` (testado; seed confirmou doc v3 no Firestore).
+- **Mensagem do cliente 12.8**: permission-denied na criação da intent NUNCA
+  mais mostra "atualize o app" — agora: "Saque indisponível para este ativo no
+  momento. Tente novamente mais tarde." ("atualize o app" só existiria para
+  incompatibilidade real de clientVersion, gate que não existe nas rules).
 - **Micro-teste LIVE do dono**: (1) `gh variable set PAYOUT_MODE --body live`;
   (2) no app, solicitar o saque MÍNIMO digitando o próprio e-mail FaucetPay;
   (3) aguardar ≤5 min e conferir status + chegada do saldo na FaucetPay;

@@ -14,7 +14,10 @@ import {
   isValidDestinationEmail,
   maskAddress,
   maskEmail,
+  normalizeAssetId,
+  resolvePayoutMode,
   validateProviderLitoshiMinimum,
+  validateProviderMinForMode,
   validateProviderMinimum,
   validateWithdrawal,
 } from '../processors/processWithdrawals';
@@ -357,6 +360,102 @@ describe('antifraude: códigos de elegibilidade (§36)', () => {
     expect(ELIGIBILITY_FAILURE_CODES.has('INVALID_ADDRESS')).toBe(false);
     expect(ELIGIBILITY_FAILURE_CODES.has('BELOW_MINIMUM')).toBe(false);
     expect(ELIGIBILITY_FAILURE_CODES.has('ASSET_DISABLED')).toBe(false);
+  });
+});
+
+describe('CORREÇÃO 12.8: normalização de ids + gate de modo + fluxo LTC v3', () => {
+  /** Réplica EXATA do LTC seedado em config/payouts v3. */
+  const LTC_V3: PayoutAssetConfig = {
+    id: 'LTC',
+    network: 'FaucetPayEmail',
+    enabled: true,
+    minWithdrawUnits: 20_000_000n,
+    feeUnits: 2_000_000n,
+    assetDecimals: 8,
+    assetUnitPerCoinScaled: 100n,
+    providerMinAssetUnits: 0n,
+    providerFeeAssetUnits: 0n,
+    rateSource: 'fixed',
+    litoshiPerCoin: 100n,
+    providerMinLitoshi: null,
+    displayRate: '1 COIN = 0,000001 LTC',
+  };
+
+  it('normalizeAssetId: caixa/espaços normalizados p/ lookup da config', () => {
+    expect(normalizeAssetId('ltc')).toBe('LTC');
+    expect(normalizeAssetId(' Ltc ')).toBe('LTC');
+    expect(normalizeAssetId('LTC')).toBe('LTC');
+    expect(normalizeAssetId('')).toBe('');
+  });
+
+  it('resolvePayoutMode: default/test ⇒ test; live ⇒ live', () => {
+    delete process.env.PAYOUT_MODE;
+    expect(resolvePayoutMode()).toBe('test');
+    expect(resolvePayoutMode('test')).toBe('test');
+    expect(resolvePayoutMode('LIVE')).toBe('live');
+    expect(resolvePayoutMode('lixo')).toBe('test'); // inválido ⇒ seguro
+  });
+
+  it('providerMinLitoshi null em TEST ⇒ passa (default seguro documentado)', () => {
+    expect(validateProviderMinForMode('test', LTC_V3)).toEqual({ ok: true });
+  });
+
+  it('providerMinLitoshi null em LIVE ⇒ BELOW_PROVIDER_MIN até o probe', () => {
+    expect(validateProviderMinForMode('live', LTC_V3)).toEqual({
+      ok: false,
+      failureCode: 'BELOW_PROVIDER_MIN',
+    });
+    // Com mínimo real confirmado, live valida normalmente:
+    const cfg: PayoutAssetConfig = { ...LTC_V3, providerMinLitoshi: 1000n };
+    expect(validateProviderMinForMode('live', cfg)).toEqual({ ok: true });
+  });
+
+  it('fluxo ponta-a-ponta (réplica): saque LTC válido, test mode ⇒ SIM completed', async () => {
+    delete process.env.PAYOUT_MODE;
+    // 1) intent com id em caixa baixa é aceito após normalização:
+    const assetCfg =
+      [LTC_V3].find((a) => a.id === normalizeAssetId('ltc')) ?? null;
+    expect(assetCfg).not.toBeNull();
+    // 2) validação econômica (a→h) passa no mínimo (20 coins):
+    const validation = validateWithdrawal({
+      ...BASE,
+      amountUnits: 20_000_000n,
+      minWithdrawUnits: assetCfg!.minWithdrawUnits,
+      destinationEmail: 'owner@example.com',
+    });
+    expect(validation).toEqual({ ok: true });
+    // 3) conversão v3 inteira: (20 − 2) × 100 = 1800 litoshi:
+    const conv = convertCoinsToLitoshi(20_000_000n, assetCfg!)!;
+    expect(conv.amountCoins).toBe(20n);
+    expect(conv.feeCoins).toBe(2n);
+    expect(conv.receivedLitoshi).toBe(1800n);
+    // 4) gate do modo (test, null) passa e o TestProvider paga SIM:
+    expect(validateProviderMinForMode('test', assetCfg!)).toEqual({ ok: true });
+    const result = await getPayoutProvider().sendPayout({
+      asset: 'LTC',
+      network: 'FaucetPayEmail',
+      address: '',
+      destinationEmail: 'owner@example.com',
+      amountUnits: conv.receivedLitoshi,
+    });
+    expect(result.status).toBe('completed');
+    expect(result.payoutSimulated).toBe(true);
+    expect(result.providerReference?.startsWith('SIM-')).toBe(true);
+  });
+
+  it('recusas seguras permanecem: mínimo/saldo/cooldown não mudaram', () => {
+    expect(
+      validateWithdrawal({ ...BASE, amountUnits: 19_999_999n }),
+    ).toEqual({ ok: false, failureCode: 'BELOW_MINIMUM' });
+    expect(
+      validateWithdrawal({ ...BASE, availableBalanceUnits: 1n }),
+    ).toEqual({ ok: false, failureCode: 'INSUFFICIENT_BALANCE' });
+    expect(
+      validateWithdrawal({
+        ...BASE,
+        lastNonFailedWithdrawalAtMs: Date.now() - 3_600_000,
+      }),
+    ).toEqual({ ok: false, failureCode: 'COOLDOWN_ACTIVE' });
   });
 });
 

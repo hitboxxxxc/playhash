@@ -175,13 +175,47 @@ export async function getPayoutsConfig(db: Firestore): Promise<PayoutsConfig> {
   };
 }
 
-/** Seleciona o provider pelo modo de payout (env PAYOUT_MODE; padrão test). */
-export function getPayoutProvider(mode?: string): PayoutProvider {
+/**
+ * Resolve o modo de payout (env PAYOUT_MODE; padrão test). CORREÇÃO 12.8:
+ * extraído p/ ser reutilizável pelo gate de providerMinLitoshi em live.
+ */
+export function resolvePayoutMode(mode?: string): 'test' | 'live' {
   const resolved = String(mode ?? process.env.PAYOUT_MODE ?? 'test')
     .trim()
     .toLowerCase();
-  if (resolved === 'live') return new FaucetPayProvider();
-  return new TestProvider();
+  return resolved === 'live' ? 'live' : 'test';
+}
+
+/** Seleciona o provider pelo modo de payout (env PAYOUT_MODE; padrão test). */
+export function getPayoutProvider(mode?: string): PayoutProvider {
+  return resolvePayoutMode(mode) === 'live'
+    ? new FaucetPayProvider()
+    : new TestProvider();
+}
+
+/**
+ * Normaliza o id do ativo ('ltc', ' Ltc ' ⇒ 'LTC'). CORREÇÃO 12.8: evita
+ * ASSET_DISABLED falso por mismatch de caixa/espaços entre cliente e config.
+ */
+export function normalizeAssetId(asset: string): string {
+  return String(asset ?? '').trim().toUpperCase();
+}
+
+/**
+ * Gate v3 do mínimo REAL do provedor por MODO (CORREÇÃO 12.8):
+ *  - test: providerMinLitoshi null ⇒ PASSA (default seguro documentado —
+ *    a barreira é o mínimo da plataforma minWithdrawUnits);
+ *  - live: providerMinLitoshi null ⇒ BLOQUEIA (BELOW_PROVIDER_MIN) até o
+ *    probe payoutProbe confirmar/gravar o mínimo real na config.
+ */
+export function validateProviderMinForMode(
+  payoutMode: 'test' | 'live',
+  cfg: PayoutAssetConfig,
+): WithdrawalValidation {
+  if (payoutMode === 'live' && cfg.providerMinLitoshi === null) {
+    return { ok: false, failureCode: 'BELOW_PROVIDER_MIN' };
+  }
+  return { ok: true };
 }
 
 // ---------------------------------------------------------------------------
@@ -405,7 +439,9 @@ function sanitize(err: unknown): string {
 
 function parseIntent(id: string, data: FirebaseFirestore.DocumentData): WithdrawalIntent | null {
   const uid = String(data.uid ?? '');
-  const asset = String(data.asset ?? '');
+  // CORREÇÃO 12.8: id do ativo NORMALIZADO (caixa/espaços) — evita
+  // ASSET_DISABLED falso por mismatch 'ltc' vs 'LTC' entre cliente e config.
+  const asset = normalizeAssetId(String(data.asset ?? ''));
   const network = String(data.network ?? '');
   const amountUnits = toInt((data.amountUnits ?? -1) as number | string);
   const clientRequestId = String(data.clientRequestId ?? '');
@@ -832,6 +868,7 @@ async function handleIntent(
   provider: PayoutProvider,
   intentSnap: FirebaseFirestore.QueryDocumentSnapshot,
   nowMs: number,
+  payoutMode: 'test' | 'live' = resolvePayoutMode(),
 ): Promise<'granted' | 'rejected' | 'failed'> {
   const intentId = intentSnap.id;
   try {
@@ -908,6 +945,12 @@ async function handleIntent(
       if (emailConv) {
         if (emailConv.receivedLitoshi <= 0n) {
           return await failBeforeReserve(db, intent, 'BELOW_MINIMUM', ruleVersion, nowMs);
+        }
+        // CORREÇÃO 12.8: em LIVE exige mínimo REAL confirmado pelo probe
+        // (providerMinLitoshi); em TEST null ⇒ default seguro documentado.
+        const modeCheck = validateProviderMinForMode(payoutMode, assetCfg);
+        if (!modeCheck.ok) {
+          return await failBeforeReserve(db, intent, modeCheck.failureCode, ruleVersion, nowMs);
         }
         const minCheck = validateProviderLitoshiMinimum(emailConv, assetCfg);
         if (!minCheck.ok) {
@@ -1011,9 +1054,10 @@ export async function processWithdrawals(db: Firestore): Promise<ProcessingSumma
     .limit(economy.limits.maxBatchSize)
     .get();
 
+  const payoutMode = resolvePayoutMode();
   const summary: ProcessingSummary = { scanned: snap.size, granted: 0, rejected: 0, failed: 0 };
   for (const doc of snap.docs) {
-    const outcome = await handleIntent(db, payouts, provider, doc, nowMs);
+    const outcome = await handleIntent(db, payouts, provider, doc, nowMs, payoutMode);
     summary[outcome] += 1;
   }
   return summary;

@@ -466,114 +466,14 @@ const GAMES: Record<string, Record<string, unknown>> = {
   },
 };
 
-/**
- * Config de PAGAMENTOS/SAQUES v1 — config/payouts (create-if-absent).
- * Autoridade do runner (processWithdrawals); cliente lê SOMENTE para exibir
- * mínimos/taxas (rótulo "valores definidos pelo servidor").
- *  - assets[]: ativos habilitados p/ saque; unidades em UNITS de coin
- *    (coinPrecision = 1_000_000 ⇒ minWithdrawUnits 20_000_000 = 20 coins;
- *    feeUnits 2_000_000 = 2 coins). receivedUnits = amount − fee.
- *  - antifraude: cooldownHours desde o último saque não-failed, maxPerDay,
- *    minAccountAgeHours e requireFinishedGames (elegibilidade).
- */
-const PAYOUTS_V1: Record<string, unknown> = {
-  assets: [
-    { id: 'BTC', network: 'Bitcoin', enabled: true, minWithdrawUnits: 20_000_000, feeUnits: 2_000_000 },
-    { id: 'LTC', network: 'Litecoin', enabled: true, minWithdrawUnits: 20_000_000, feeUnits: 2_000_000 },
-    { id: 'DOGE', network: 'Dogecoin', enabled: true, minWithdrawUnits: 20_000_000, feeUnits: 2_000_000 },
-    { id: 'USDT', network: 'TRC20', enabled: true, minWithdrawUnits: 20_000_000, feeUnits: 2_000_000 },
-  ],
-  cooldownHours: 24,
-  maxPerDay: 3,
-  minAccountAgeHours: 24,
-  requireFinishedGames: 1,
-  coinPrecision: 1_000_000,
-  version: 1,
-};
-
-/**
- * Campos v2 de CONVERSÃO EXPLÍCITA COIN→ativo por ativo (config/payouts
- * version 2). Autoridade backend; premissas conservadoras e AJUSTÁVEIS:
- *  - assetUnitPerCoinScaled: menores unidades do ativo que 1 COIN compra
- *    (ex.: DOGE 200_000_000 com 8 decimais ⇒ 1 coin = 2 DOGE; BTC 25 sat).
- *  - providerMinAssetUnits / providerFeeAssetUnits: mínimo REAL e taxa da
- *    FaucetPay em menores unidades (probe payoutProbe confirma na prática).
- *  - minWithdrawUnits realinhado para garantir gross ≥ providerMin + fee.
- * Regra do processador: receivedAsset = coins × unitPerCoin − providerFee;
- * validação: gross ≥ providerMin + providerFee (senão BELOW_PROVIDER_MIN).
- */
-const PAYOUTS_ASSET_V2: Record<string, Record<string, unknown>> = {
-  BTC: {
-    assetDecimals: 8,
-    assetUnitPerCoinScaled: 25, // 1 coin = 25 sat (premissa conservadora)
-    providerMinAssetUnits: 10_000, // 0.0001 BTC
-    providerFeeAssetUnits: 500,
-    minWithdrawUnits: 450_000_000, // 450 coins ⇒ 11_250 sat bruto
-  },
-  LTC: {
-    assetDecimals: 8,
-    assetUnitPerCoinScaled: 2_000, // 1 coin = 0.00002 LTC
-    providerMinAssetUnits: 100_000, // 0.001 LTC
-    providerFeeAssetUnits: 5_000,
-    minWithdrawUnits: 60_000_000, // 60 coins ⇒ 120_000 litoshi bruto
-  },
-  DOGE: {
-    assetDecimals: 8,
-    assetUnitPerCoinScaled: 2_000_000, // 1 coin = 0.02 DOGE (unitPerCoin maior)
-    providerMinAssetUnits: 500_000_000, // 5 DOGE
-    providerFeeAssetUnits: 50_000_000, // 0.5 DOGE
-    minWithdrawUnits: 300_000_000, // 300 coins ⇒ 6 DOGE bruto
-  },
-  USDT: {
-    assetDecimals: 6,
-    assetUnitPerCoinScaled: 5_000, // 1 coin = 0.005 USDT
-    providerMinAssetUnits: 5_000_000, // 5 USDT (TRC20)
-    providerFeeAssetUnits: 1_000_000, // 1 USDT
-    minWithdrawUnits: 1_300_000_000, // 1300 coins ⇒ 6.5 USDT bruto
-  },
-};
-
-/**
- * Config de SAQUES v3 (config/payouts version 3) — DESTINO = E-MAIL da conta
- * FaucetPay do usuário (transferência INTERNA; NUNCA endereço externo).
- *  - destinationType:'faucetpay_email' e futureRateSource:'usd_auto'
- *    (documental: no futuro a conversão será em USD calculada automaticamente;
- *    NENHUM feed é implementado agora).
- *  - LTC único habilitado com conversão FIXA: litoshiPerCoin = 100 ⇒
- *    1 COIN = 100 litoshi = 0,000001 LTC (aritmética inteira no processador).
- *  - providerMinLitoshi = null até o probe payoutProbe confirmar o mínimo
- *    REAL do envio interno (se real > config, ajustar minWithdrawCoins).
- *  - Campos numéricos legados (units) mantidos em sincronia p/ compatibilidade
- *    do processador/probe: minWithdrawUnits = minWithdrawCoins × 1e6 etc.
- *  - BTC/DOGE/USDT desabilitados ('conversão em definição').
- */
-const PAYOUTS_V3_META: Record<string, unknown> = {
-  destinationType: 'faucetpay_email',
-  futureRateSource: 'usd_auto', // documental — sem feed implementado
-};
-
-const PAYOUTS_ASSET_V3: Record<string, Record<string, unknown>> = {
-  LTC: {
-    network: 'FaucetPayEmail',
-    enabled: true,
-    rateSource: 'fixed',
-    litoshiPerCoin: 100,
-    displayRate: '1 COIN = 0,000001 LTC',
-    minWithdrawCoins: 20,
-    feeCoins: 2,
-    providerMinLitoshi: null, // preencher via payoutProbe (mínimo real)
-    // Compat numérica (units de coin; 1 coin = 1e6 units):
-    minWithdrawUnits: 20_000_000, // 20 coins
-    feeUnits: 2_000_000, // 2 coins
-    assetDecimals: 8,
-    assetUnitPerCoinScaled: 100, // 1 coin = 100 litoshi (mesma taxa fixa)
-    providerMinAssetUnits: 0, // v3 usa providerMinLitoshi
-    providerFeeAssetUnits: 0, // v3 desconta feeCoins ANTES da conversão
-  },
-  BTC: { enabled: false, note: 'conversão em definição' },
-  DOGE: { enabled: false, note: 'conversão em definição' },
-  USDT: { enabled: false, note: 'conversão em definição' },
-};
+// Dados canônicos v1/v2/v3 de config/payouts + helpers PUROS de merge
+// (unit-testáveis) vivem em core/payoutsUpgrade.ts — fonte ÚNICA usada pelo
+// seed e pelos testes de upgrade idempotente.
+import {
+  PAYOUTS_ASSET_V2,
+  PAYOUTS_V1,
+  buildPayoutsV3Doc,
+} from './core/payoutsUpgrade';
 
 async function createIfMissing(
   db: ReturnType<typeof initAdmin>['db'],
@@ -707,30 +607,16 @@ async function upgradePayoutsToV3(
 ): Promise<'created' | 'upgraded' | 'current'> {
   const ref = db.doc('config/payouts');
   const snap = await ref.get();
-  const applyV3 = (assets: Record<string, unknown>[]) =>
-    assets.map((a) => ({
-      ...a,
-      ...(typeof a.id === 'string' ? PAYOUTS_ASSET_V3[a.id] : undefined),
-    }));
   if (!snap.exists) {
-    const v1Assets = PAYOUTS_V1.assets as Record<string, unknown>[];
-    await ref.set({
-      ...PAYOUTS_V1,
-      ...PAYOUTS_V3_META,
-      assets: applyV3(v1Assets),
-      version: 3,
-    });
+    await ref.set(buildPayoutsV3Doc(null));
     return 'created';
   }
   const version = typeof snap.get('version') === 'number' ? Number(snap.get('version')) : 1;
   if (version >= 3) return 'current';
-  const existingAssets = Array.isArray(snap.get('assets'))
-    ? (snap.get('assets') as Record<string, unknown>[])
-    : (PAYOUTS_V1.assets as Record<string, unknown>[]);
-  await ref.set(
-    { ...PAYOUTS_V3_META, assets: applyV3(existingAssets), version: 3 },
-    { merge: true },
-  );
+  // UPGRADE IDEMPOTENTE a partir de QUALQUER versão anterior (v1/v2):
+  // MERGE dos campos v3 por ativo + metadados + version=3 — nunca remove
+  // campos existentes (set com merge:true).
+  await ref.set(buildPayoutsV3Doc(snap.data() ?? {}), { merge: true });
   return 'upgraded';
 }
 

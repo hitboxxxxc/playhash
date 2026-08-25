@@ -165,9 +165,13 @@ class WithdrawalService {
           continue;
         }
         if (e.code == 'permission-denied') {
+          // CORREÇÃO 12.8: "atualize o app" SOMENTE existe para
+          // incompatibilidade REAL de clientVersion (não há esse gate nas
+          // rules). Recusa de rules/config/ativo ⇒ mensagem acionável neutra;
+          // código técnico fica só no log local.
           throw WithdrawalException(
-            'Saque bloqueado pela configuração do servidor. '
-            'Atualize o app e tente novamente.',
+            'Saque indisponível para este ativo no momento. '
+            'Tente novamente mais tarde.',
           );
         }
         throw WithdrawalException(
