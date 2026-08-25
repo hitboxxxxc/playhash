@@ -300,7 +300,30 @@ export async function closeBlocks(db: Firestore): Promise<{
 
   // Só fecha períodos COMPLETOS (o período corrente ainda está "aberto").
   const stateSnap = await db.doc('config/economy').get();
-  const lastFinalized = Number(stateSnap.get('lastFinalizedPeriodKey') ?? currentPeriod - 1);
+  const rawLast = stateSnap.get('lastFinalizedPeriodKey');
+
+  // BOOTSTRAP (12.23): ponteiro AUSENTE ⇒ nenhum bloco foi finalizado ainda.
+  // O fallback antigo (`?? currentPeriod - 1`) criava um DEADLOCK: o loop
+  // partia de currentPeriod e nunca executava, o ponteiro nunca era gravado
+  // e NENHUM bloco fechava (observado em produção: closedPeriods=[] sempre).
+  // Fix: grava o ponteiro inicial SEM distribuir (evita cunhagem retroativa
+  // de horas de blocos acumulados); a partir da próxima fronteira de 5 min
+  // os blocos passam a fechar normalmente com o BLOCK_REWARD da config.
+  if (rawLast === undefined || rawLast === null) {
+    await db.doc('config/economy').set(
+      {
+        lastFinalizedPeriodKey: currentPeriod - 1,
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true },
+    );
+    console.log(
+      `[closeBlocks] bootstrap lastFinalizedPeriodKey=${currentPeriod - 1} (sem distribuicao retroativa)`,
+    );
+    return { currentPeriod, closedPeriods: [] };
+  }
+
+  const lastFinalized = Number(rawLast);
 
   const closedPeriods: string[] = [];
   for (let p = lastFinalized + 1; p <= currentPeriod - 1; p++) {
