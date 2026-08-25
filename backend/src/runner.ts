@@ -648,6 +648,66 @@ export async function runLivePayoutDirect(
   return { executed: true, status: 'failed', providerMinLitoshi: candidate };
 }
 
+/**
+ * blockDiag (12.23) — PROVA DE DISTRIBUIÇÃO SOMENTE-LEITURA dos últimos
+ * blocos finalizados: totais do doc blocks/{periodKey}, config vigente e as
+ * transações REWARD_BLOCK com uid MASCARADO (nunca imprime identidade).
+ * Gate: SOMENTE executa com env === 'dev' (repo variable ENV).
+ */
+async function runBlockDiag(
+  db: ReturnType<typeof initAdmin>['db'],
+  opts: { env: string },
+): Promise<void> {
+  if (opts.env !== 'dev') {
+    console.log(
+      `[runner] blockDiag SKIP: requer repo variable ENV=dev (atual='${opts.env}'). Nada foi executado.`,
+    );
+    return;
+  }
+  const econ = await db.doc('config/economy').get();
+  console.log(
+    `[blockDiag] config blockRewardUnits=${econ.get('blockRewardUnits')} ` +
+      `economicRuleVersion=${econ.get('economicRuleVersion')} ` +
+      `residueUnits=${econ.get('residueUnits')} ` +
+      `lastFinalizedPeriodKey=${econ.get('lastFinalizedPeriodKey')}`,
+  );
+  const last = Number(econ.get('lastFinalizedPeriodKey'));
+  for (const pk of [String(last - 1), String(last)]) {
+    const b = await db.doc(`blocks/${pk}`).get();
+    if (!b.exists) {
+      console.log(`[blockDiag] blocks/${pk}: AUSENTE`);
+      continue;
+    }
+    const d = b.data() ?? {};
+    console.log(
+      `[blockDiag] blocks/${pk}: status=${d.status} baseReward=${d.baseRewardUnits} ` +
+        `effective=${d.effectiveRewardUnits} distributedTotal=${d.distributedTotalUnits} ` +
+        `residue=${d.residueUnits} networkPower=${d.networkPower} ` +
+        `userCount=${d.userCount} ruleVersion=${d.ruleVersion}`,
+    );
+  }
+  // Transações do último bloco (filtro por referenceId; type filtrado em
+  // memória p/ não exigir índice composto). uid SEMPRE mascarado.
+  const txs = await db
+    .collection('transactions')
+    .where('referenceId', '==', String(last))
+    .limit(50)
+    .get();
+  let shown = 0;
+  for (const t of txs.docs) {
+    if (t.get('type') !== 'REWARD_BLOCK') continue;
+    const uid = String(t.get('userId') ?? '');
+    const masked =
+      uid.length <= 4 ? '****' : `${uid.slice(0, 2)}***${uid.slice(-2)}`;
+    console.log(
+      `[blockDiag] tx period=${last} user=${masked} amount=${t.get('amount')} ` +
+        `ruleVersion=${t.get('ruleVersion')} status=${t.get('status')}`,
+    );
+    shown += 1;
+  }
+  console.log(`[blockDiag] REWARD_BLOCK no bloco ${last}: ${shown} transação(ões)`);
+}
+
 /** Máscara local de e-mail p/ logs do devDiag (nunca imprime o valor cheio). */
 function maskEmailLog(email: unknown): string {
   if (typeof email !== 'string' || email.indexOf('@') <= 0) return '<masked>';
@@ -793,6 +853,20 @@ async function main(): Promise<void> {
       process.exitCode = 0;
     } catch (err) {
       console.error(`[runner] rulesProbe FAILED=${sanitize(err)}`);
+      process.exitCode = 1;
+    }
+    return;
+  }
+
+  if (action === 'blockDiag') {
+    try {
+      await runBlockDiag(db, {
+        env: String(process.env.APP_ENV ?? '').trim().toLowerCase(),
+      });
+      console.log(`[runner] done in ${Date.now() - startedAt}ms`);
+      process.exitCode = 0;
+    } catch (err) {
+      console.error(`[runner] blockDiag FAILED=${sanitize(err)}`);
       process.exitCode = 1;
     }
     return;

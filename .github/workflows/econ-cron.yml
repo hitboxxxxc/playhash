@@ -25,7 +25,7 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: 'run = economic runner | seed = dev seed | devTopUp = crédito de dev (ENV=dev) | rulesProbe = verificação das rules (ENV=dev) | payoutProbe = leitura FaucetPay + grava providerMinLitoshi (ENV=dev) | payoutLiveTest = micro-payout REAL por endereço (PAYOUT_MODE=live + inputs) | livePayoutDirect = micro-payout REAL por E-MAIL do dono (PAYOUT_MODE=live; PROVA 1 do provedor)'
+        description: 'run = economic runner | seed = dev seed | devTopUp = crédito de dev (ENV=dev) | rulesProbe = verificação das rules (ENV=dev) | payoutProbe = leitura FaucetPay + grava providerMinLitoshi (ENV=dev) | payoutLiveTest = micro-payout REAL por endereço (PAYOUT_MODE=live + inputs) | livePayoutDirect = micro-payout REAL por E-MAIL do dono (PAYOUT_MODE=live; PROVA 1 do provedor) | blockDiag = prova de distribuição dos últimos blocos (ENV=dev, somente-leitura, mascarado)'
         type: choice
         options:
           - run
@@ -36,6 +36,7 @@ on:
           - payoutLiveTest
           - livePayoutDirect
           - devDiag
+          - blockDiag
         default: run
         required: true
       uid:
@@ -152,6 +153,17 @@ jobs:
           RUNNER_ACTION: payoutProbe
           APP_ENV: ${{ vars.ENV }}
           FAUCETPAY_API_KEY: ${{ secrets.FAUCETPAY_API_KEY }}
+        run: node dist/runner.js
+
+      # blockDiag (12.23): prova de distribuição SOMENTE-LEITURA dos últimos
+      # blocos finalizados (totais + transações REWARD_BLOCK com uid mascarado).
+      # GATE: ENV=dev.
+      - name: Block diag (ENV=dev only)
+        if: github.event_name == 'workflow_dispatch' && inputs.action == 'blockDiag'
+        working-directory: backend
+        env:
+          RUNNER_ACTION: blockDiag
+          APP_ENV: ${{ vars.ENV }}
         run: node dist/runner.js
 
       # devDiag (12.11): diagnóstico rateLimits/intents + relaxes opcionais de
