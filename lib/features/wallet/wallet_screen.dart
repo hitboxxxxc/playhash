@@ -12,6 +12,7 @@ import '../../data/repositories/payouts_repository.dart';
 import 'widgets/asset_selector.dart';
 import 'widgets/wallet_header.dart';
 import 'widgets/wallet_history_list.dart';
+import 'widgets/withdraw_confirm_sheet.dart';
 import 'widgets/withdraw_form.dart';
 
 /// CARTEIRA — saldos (disponível/pendente/vitalício), saque com seletor de
@@ -71,12 +72,37 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
     );
   }
 
-  /// Envia a intent e observa o resultado do runner.
+  /// CONFIRMAÇÃO EXPLÍCITA → cria a intent → observa o resultado do runner.
   Future<void> _submit({
     required PayoutAsset asset,
     required BigInt amountUnits,
-    required String address,
+    required String destinationEmail,
   }) async {
+    if (!mounted) return;
+
+    // Sheet de confirmação OBRIGATÓRIA antes do intent (v3).
+    final BigInt receiveLitoshi = receivedLitoshi(
+          amountUnits,
+          WithdrawAssetInfo(
+            id: asset.id,
+            network: asset.network,
+            minWithdrawUnits: asset.minWithdrawUnits,
+            feeUnits: asset.feeUnits,
+          ),
+        ) ??
+        BigInt.zero;
+    final bool confirmed = await WithdrawConfirmSheet.show(
+      context,
+      assetId: asset.id,
+      destinationMasked: maskEmail(destinationEmail),
+      amountUnits: amountUnits,
+      feeUnits: asset.feeUnits,
+      litoshiPerCoin: 100,
+      displayRate: '1 COIN = 0,000001 LTC',
+      receivedLitoshiValue: receiveLitoshi,
+    );
+    if (!confirmed || !mounted) return; // CANCELAR ⇒ NADA é criado
+
     final String? uid = await ref.read(currentUidProvider.future);
     if (uid == null || !mounted) return;
 
@@ -88,9 +114,8 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
       requestId = await service.requestWithdrawal(
         uid: uid,
         asset: asset.id,
-        network: asset.network,
         amountUnits: amountUnits,
-        address: address,
+        destinationEmail: destinationEmail,
       );
     } on WithdrawalException catch (e) {
       if (!mounted) return;
@@ -211,21 +236,26 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
                 const SizedBox(height: 8),
                 config.maybeWhen(
                   data: (PayoutsConfigModel? cfg) {
-                    final List<PayoutAsset> assets =
-                        cfg?.assets.where((PayoutAsset a) => a.enabled).toList() ??
-                            const <PayoutAsset>[];
-                    if (_selectedAssetId.isEmpty && assets.isNotEmpty) {
-                      _selectedAssetId = assets.first.id;
+                    // TODOS os ativos vão p/ o seletor: habilitados clicáveis,
+                    // desabilitados com selo "EM BREVE" (não selecionáveis).
+                    final List<PayoutAsset> all =
+                        cfg?.assets ?? const <PayoutAsset>[];
+                    final List<PayoutAsset> enabled = all
+                        .where((PayoutAsset a) => a.enabled)
+                        .toList(growable: false);
+                    if (_selectedAssetId.isEmpty && enabled.isNotEmpty) {
+                      _selectedAssetId = enabled.first.id;
                     }
                     return Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: <Widget>[
                         AssetSelector(
-                          assets: assets
+                          assets: all
                               .map((PayoutAsset a) => WalletAssetChip(
                                     id: a.id,
                                     network: a.network,
                                     symbol: _symbolFor(a.id),
+                                    enabled: a.enabled,
                                   ))
                               .toList(growable: false),
                           selectedId: _selectedAssetId,
@@ -233,8 +263,8 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
                               setState(() => _selectedAssetId = id),
                         ),
                         const SizedBox(height: 16),
-                        if (_selectedAssetId.isNotEmpty && assets.isNotEmpty)
-                          _buildForm(assets),
+                        if (_selectedAssetId.isNotEmpty && enabled.isNotEmpty)
+                          _buildForm(enabled),
                       ],
                     );
                   },
@@ -276,10 +306,10 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
       ),
       availableBalance: available,
       submitting: _submitting,
-      onSubmit: (BigInt amount, String address) => _submit(
+      onSubmit: (BigInt amount, String destinationEmail) => _submit(
         asset: asset,
         amountUnits: amount,
-        address: address,
+        destinationEmail: destinationEmail,
       ),
     );
   }
@@ -323,7 +353,7 @@ List<WalletHistoryItem> _mergedHistory(WidgetRef ref) {
         amount: -w.amountUnits,
         date: w.createdAt,
         status: w.status,
-        addressMasked: w.addressMasked,
+        destinationMasked: w.destinationMasked, // e-mail SEMPRE mascarado
       ),
   ];
   items.sort((WalletHistoryItem a, WalletHistoryItem b) {

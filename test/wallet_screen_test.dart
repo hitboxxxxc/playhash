@@ -67,23 +67,23 @@ void main() {
     expect(find.widgetWithText(TextFormField, '100'), findsOneWidget);
   });
 
-  testWidgets('submit válido emite valor (units) e endereço digitado',
+  testWidgets('submit válido emite valor (units) e E-MAIL FaucetPay digitado',
       (WidgetTester tester) async {
     BigInt? submittedAmount;
-    String? submittedAddress;
+    String? submittedEmail;
 
     await pumpForm(
       tester,
       availableBalance: BigInt.from(100000000),
-      onSubmit: (BigInt amount, String address) {
+      onSubmit: (BigInt amount, String email) {
         submittedAmount = amount;
-        submittedAddress = address;
+        submittedEmail = email;
       },
     );
 
     await tester.enterText(
       find.byType(TextFormField).first,
-      'bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080',
+      'owner@example.com',
     );
     await tester.enterText(find.byType(TextFormField).last, '25');
     await tester.tap(find.byKey(const ValueKey<String>('submit_withdraw')));
@@ -91,7 +91,7 @@ void main() {
 
     // 25 coins = 25 × 1e6 units.
     expect(submittedAmount, BigInt.from(25000000));
-    expect(submittedAddress, 'bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080');
+    expect(submittedEmail, 'owner@example.com');
   });
 
   testWidgets('bloqueia valor abaixo do mínimo da config (erro específico)',

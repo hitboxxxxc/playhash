@@ -47,6 +47,7 @@ class WalletAssetChip {
     required this.id,
     required this.network,
     required this.symbol,
+    this.enabled = true,
   });
 
   final String id;
@@ -54,6 +55,9 @@ class WalletAssetChip {
 
   /// Símbolo textual/geométrico simples (ex.: '₿'→'B', 'Ł', 'Ð', '₮').
   final String symbol;
+
+  /// false ⇒ chip desabilitado com selo "EM BREVE" (conversão em definição).
+  final bool enabled;
 }
 
 class _AssetChip extends StatelessWidget {
@@ -69,11 +73,14 @@ class _AssetChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final Color accent = selected ? AppColors.cyan : AppColors.textSecondary;
+    final bool disabled = !asset.enabled;
+    final Color accent = disabled
+        ? AppColors.textSecondary.withValues(alpha: 0.45)
+        : (selected ? AppColors.cyan : AppColors.textSecondary);
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        onTap: onTap,
+        onTap: disabled ? null : onTap, // desabilitado NUNCA seleciona
         borderRadius: BorderRadius.circular(6),
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 150),
@@ -96,13 +103,47 @@ class _AssetChip extends StatelessWidget {
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: <Widget>[
-                  Text(
-                    asset.id,
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
-                      color: selected ? AppColors.textPrimary : accent,
-                    ),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      Text(
+                        asset.id,
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                          color: selected && !disabled
+                              ? AppColors.textPrimary
+                              : accent,
+                        ),
+                      ),
+                      if (disabled) ...<Widget>[
+                        const SizedBox(width: 6),
+                        Container(
+                          key: ValueKey<String>('soon_${asset.id}'),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 4,
+                            vertical: 1,
+                          ),
+                          decoration: BoxDecoration(
+                            border: Border.all(
+                              color:
+                                  AppColors.textSecondary.withValues(alpha: 0.4),
+                            ),
+                            borderRadius: BorderRadius.circular(3),
+                          ),
+                          child: Text(
+                            'EM BREVE',
+                            style: TextStyle(
+                              fontSize: 7.5,
+                              letterSpacing: 0.6,
+                              fontWeight: FontWeight.w700,
+                              color: AppColors.textSecondary
+                                  .withValues(alpha: 0.75),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
                   Text(
                     asset.network,

@@ -13,11 +13,25 @@
 export interface PayoutRequest {
   /** Id do ativo (BTC/LTC/DOGE/USDT) — deve existir em config/payouts.assets. */
   asset: string;
-  /** Rede de destino (Bitcoin/Litecoin/Dogecoin/TRC20). */
+  /**
+   * Rede de destino. v3 (saque por e-mail): 'faucetpay_email' (transferência
+   * INTERNA da FaucetPay); legado: Bitcoin/Litecoin/Dogecoin/TRC20.
+   */
   network: string;
-  /** Endereço completo de destino (SÓ em memória; NUNCA em logs). */
+  /**
+   * Endereço completo de destino (fluxo LEGADO; SÓ em memória; NUNCA em logs).
+   * No fluxo v3 por e-mail fica VAZIO — usar destinationEmail.
+   */
   address: string;
-  /** Valor BRUTO em units (1 coin = 1e6 units); taxa descontada pelo backend. */
+  /**
+   * E-mail da conta FaucetPay do destinatário (fluxo v3; transferência
+   * interna). SÓ em memória; NUNCA em logs (apenas máscara).
+   */
+  destinationEmail?: string;
+  /**
+   * Valor em MENORES UNIDADES do ativo (litoshi p/ LTC; sat p/ BTC). No fluxo
+   * v3 já é o valor LÍQUIDO pós-taxa convertido pelo backend (inteiro).
+   */
   amountUnits: bigint;
 }
 

@@ -56,7 +56,8 @@ class PayoutsConfigModel {
 }
 
 /// Espelho SOMENTE-LEITURA de `withdrawals/{id}` (escrito pelo runner).
-/// O endereço completo NUNCA é exibido — apenas [addressMasked].
+/// O destino completo NUNCA é exibido — apenas [destinationMasked]
+/// (e-mail mascarado no fluxo v3; máscara de endereço no legado).
 class WithdrawalModel {
   const WithdrawalModel({
     required this.id,
@@ -66,7 +67,7 @@ class WithdrawalModel {
     required this.amountUnits,
     required this.feeUnits,
     required this.receivedUnits,
-    required this.addressMasked,
+    required this.destinationMasked,
     required this.status, // processing | completed | failed
     this.providerReference,
     this.errorCode,
@@ -80,7 +81,9 @@ class WithdrawalModel {
   final BigInt amountUnits;
   final BigInt feeUnits;
   final BigInt receivedUnits;
-  final String addressMasked;
+
+  /// Máscara do destino (ex.: 'ow***@example.com') — NUNCA o valor completo.
+  final String destinationMasked;
   final String status;
   final String? providerReference;
   final String? errorCode;
@@ -113,7 +116,9 @@ class WithdrawalModel {
         amountUnits: _toBigInt(map['amountUnits']),
         feeUnits: _toBigInt(map['feeUnits']),
         receivedUnits: _toBigInt(map['receivedUnits']),
-        addressMasked: (map['addressMasked'] as String?) ?? '',
+        destinationMasked: (map['destinationMasked'] as String?) ??
+            (map['addressMasked'] as String?) ??
+            '',
         status: (map['status'] as String?) ?? 'processing',
         providerReference: map['providerReference'] as String?,
         errorCode: map['errorCode'] as String?,
@@ -126,18 +131,17 @@ abstract interface class PayoutsRepositoryApi {
   /// Lê `config/payouts` (null se ausente/indisponível).
   Future<PayoutsConfigModel?> loadConfig();
 
-  /// Cria a intent de saque com EXATAMENTE os campos das rules:
-  /// {uid, asset, network, amountUnits, address, addressMasked,
+  /// Cria a intent de saque com EXATAMENTE os campos das rules (v3):
+  /// {uid, asset, amountUnits, destinationEmail, destinationMasked,
   ///  clientRequestId, createdAt, clientVersion}.
   /// O doc id É o clientRequestId ⇒ retry offline reescreve o MESMO doc.
   Future<void> createWithdrawalIntent({
     required String clientRequestId,
     required String uid,
     required String asset,
-    required String network,
     required BigInt amountUnits,
-    required String address,
-    required String addressMasked,
+    required String destinationEmail,
+    required String destinationMasked,
     required String clientVersion,
   });
 
@@ -220,10 +224,9 @@ class PayoutsRepository implements PayoutsRepositoryApi {
     required String clientRequestId,
     required String uid,
     required String asset,
-    required String network,
     required BigInt amountUnits,
-    required String address,
-    required String addressMasked,
+    required String destinationEmail,
+    required String destinationMasked,
     required String clientVersion,
   }) async {
     await _db
@@ -232,10 +235,9 @@ class PayoutsRepository implements PayoutsRepositoryApi {
         .set(<String, dynamic>{
       'uid': uid,
       'asset': asset,
-      'network': network,
       'amountUnits': amountUnits.toString(),
-      'address': address,
-      'addressMasked': addressMasked,
+      'destinationEmail': destinationEmail,
+      'destinationMasked': destinationMasked,
       'clientRequestId': clientRequestId,
       'createdAt': FieldValue.serverTimestamp(),
       'clientVersion': clientVersion,

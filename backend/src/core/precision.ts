@@ -51,6 +51,19 @@ export function coinToAsset(
   return floorDiv(coinUnits * assetUnitPerCoinScaled, BigInt(coinPrecision));
 }
 
+/**
+ * Conversão FIXA COIN→LTC em ARITMÉTICA INTEIRA de COINS (config/payouts v3):
+ *   litoshi = amountCoins × litoshiPerCoin
+ * Padrão atual: litoshiPerCoin = 100 ⇒ 1 COIN = 100 litoshi = 0,000001 LTC.
+ * Entrada em COINS INTEIRAS — nunca fração de coin (resíduo fica no backend).
+ * 100% BigInt (proibido float); determinístico e sem perda.
+ */
+export function coinsToLitoshi(amountCoins: bigint, litoshiPerCoin: bigint): bigint {
+  if (amountCoins < 0n) throw new Error('NEGATIVE_COIN_AMOUNT');
+  if (litoshiPerCoin <= 0n) throw new Error('INVALID_ASSET_RATE');
+  return amountCoins * litoshiPerCoin;
+}
+
 export interface DistributionResult {
   /** reward_i por uid (apenas usuários com reward > 0). */
   rewards: Map<string, bigint>;

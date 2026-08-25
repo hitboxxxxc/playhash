@@ -29,7 +29,7 @@ function base(
     finishedGames: 5,
     requireFinishedGames: 1,
     userStatus: 'active',
-    addressValid: true,
+    destinationValid: true,
     ...overrides,
   };
 }
@@ -163,10 +163,10 @@ describe('antifraude: precedência e limites', () => {
     ).toEqual({ ok: false, failureCode: 'ACCOUNT_IN_REVIEW' });
   });
 
-  it('endereço inválido é a última checagem (h)', () => {
+  it('destino inválido é a última checagem (h) — e-mail ⇒ INVALID_EMAIL', () => {
     expect(
-      validateWithdrawal(base({ addressValid: false })),
-    ).toEqual({ ok: false, failureCode: 'INVALID_ADDRESS' });
+      validateWithdrawal(base({ destinationValid: false, destinationEmail: 'x@y' })),
+    ).toEqual({ ok: false, failureCode: 'INVALID_EMAIL' });
   });
 
   it('fluxo completo válido permanece ok', () => {

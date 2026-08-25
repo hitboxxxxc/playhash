@@ -14,10 +14,9 @@ class _FakePayoutsRepository implements PayoutsRepositoryApi {
     required String clientRequestId,
     required String uid,
     required String asset,
-    required String network,
     required BigInt amountUnits,
-    required String address,
-    required String addressMasked,
+    required String destinationEmail,
+    required String destinationMasked,
     required String clientVersion,
   }) async {
     if (failTimes > 0) {
@@ -28,10 +27,9 @@ class _FakePayoutsRepository implements PayoutsRepositoryApi {
       'clientRequestId': clientRequestId,
       'uid': uid,
       'asset': asset,
-      'network': network,
       'amountUnits': amountUnits.toString(),
-      'address': address,
-      'addressMasked': addressMasked,
+      'destinationEmail': destinationEmail,
+      'destinationMasked': destinationMasked,
       'clientVersion': clientVersion,
     });
   }
@@ -53,36 +51,31 @@ class _FakePayoutsRepository implements PayoutsRepositoryApi {
 }
 
 void main() {
-  group('WithdrawalService.requestWithdrawal', () {
+  group('WithdrawalService.requestWithdrawal (v3 — e-mail FaucetPay)', () {
     test('envia payload com campos EXATOS das rules', () async {
       final _FakePayoutsRepository repo = _FakePayoutsRepository();
       final WithdrawalService service = WithdrawalService(repository: repo);
 
       final String requestId = await service.requestWithdrawal(
         uid: 'uid-1',
-        asset: 'BTC',
-        network: 'Bitcoin',
+        asset: 'LTC',
         amountUnits: BigInt.from(25000000),
-        address: 'bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080',
+        destinationEmail: 'owner@example.com',
         clientRequestId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
       );
 
       expect(requestId, 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee');
       expect(repo.calls, hasLength(1));
-      // Campos exigidos pelas rules: {uid, asset, network, amountUnits,
-      // address, addressMasked, clientRequestId, clientVersion}
+      // Campos exigidos pelas rules (v3): {uid, asset, amountUnits,
+      // destinationEmail, destinationMasked, clientRequestId, clientVersion}
       // (+ createdAt serverTimestamp no doc real).
       final Map<String, dynamic> call = repo.calls.single;
       expect(call['uid'], 'uid-1');
-      expect(call['asset'], 'BTC');
-      expect(call['network'], 'Bitcoin');
+      expect(call['asset'], 'LTC');
       expect(call['amountUnits'], '25000000');
-      expect(
-        call['address'],
-        'bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080',
-      );
-      expect(call['addressMasked'], isNot(call['address']));
-      expect(call['addressMasked'], contains('…'));
+      expect(call['destinationEmail'], 'owner@example.com');
+      expect(call['destinationMasked'], isNot(call['destinationEmail']));
+      expect(call['destinationMasked'], contains('***@'));
       expect(call['clientRequestId'], requestId);
     });
 
@@ -93,10 +86,9 @@ void main() {
 
       final String requestId = await service.requestWithdrawal(
         uid: 'uid-1',
-        asset: 'DOGE',
-        network: 'Dogecoin',
+        asset: 'LTC',
         amountUnits: BigInt.from(20000000),
-        address: 'DH5yaieqoZN36fDVciNyRueRGvGLR3mr7L',
+        destinationEmail: 'owner@example.com',
       );
 
       // Sucesso após retries com o MESMO id — nunca duplica.
@@ -112,9 +104,8 @@ void main() {
         service.requestWithdrawal(
           uid: 'uid-1',
           asset: 'LTC',
-          network: 'Litecoin',
           amountUnits: BigInt.from(20000000),
-          address: 'ltc1qdp3p2rezaw3u2c8pq7z9kr5zk2mcqsxyv9qzxe',
+          destinationEmail: 'owner@example.com',
           maxAttempts: 2,
         ),
         throwsA(isA<WithdrawalException>()),
@@ -128,13 +119,37 @@ void main() {
       await expectLater(
         service.requestWithdrawal(
           uid: 'uid-1',
-          asset: 'BTC',
-          network: 'Bitcoin',
+          asset: 'LTC',
           amountUnits: BigInt.zero,
-          address: 'bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080',
+          destinationEmail: 'owner@example.com',
         ),
         throwsA(isA<WithdrawalException>()),
       );
+      expect(repo.calls, isEmpty);
+    });
+
+    test('e-mail inválido é bloqueado LOCALMENTE (nunca cria intent)',
+        () async {
+      final _FakePayoutsRepository repo = _FakePayoutsRepository();
+      final WithdrawalService service = WithdrawalService(repository: repo);
+
+      for (final String bad in <String>[
+        'sem-arroba',
+        'a@b',
+        'dois @@espacos.com',
+        '',
+      ]) {
+        await expectLater(
+          service.requestWithdrawal(
+            uid: 'uid-1',
+            asset: 'LTC',
+            amountUnits: BigInt.from(20000000),
+            destinationEmail: bad,
+          ),
+          throwsA(isA<WithdrawalException>()),
+          reason: 'e-mail "$bad" deveria ser bloqueado',
+        );
+      }
       expect(repo.calls, isEmpty);
     });
 
@@ -156,7 +171,8 @@ void main() {
       expect(withdrawalErrorMessage('BELOW_MINIMUM'), contains('mínimo'));
       expect(withdrawalErrorMessage('COOLDOWN_ACTIVE'), contains('24h'));
       expect(withdrawalErrorMessage('DAILY_LIMIT_REACHED'), contains('diário'));
-      expect(withdrawalErrorMessage('INVALID_ADDRESS'), contains('Endereço'));
+      expect(withdrawalErrorMessage('INVALID_EMAIL'), contains('E-mail'));
+      expect(withdrawalErrorMessage('EMAIL_NOT_FOUND'), contains('FaucetPay'));
       expect(withdrawalErrorMessage('ACCOUNT_IN_REVIEW'), contains('análise'));
       expect(withdrawalErrorMessage('ACCOUNT_TOO_NEW'), contains('24h'));
       expect(withdrawalErrorMessage('NO_FINISHED_GAMES'), contains('partida'));
@@ -165,32 +181,25 @@ void main() {
     });
   });
 
-  group('privacidade e validação local leve', () {
-    test('maskWalletAddress nunca expõe o endereço completo', () {
-      const String full = 'bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080';
-      final String masked = maskWalletAddress(full);
+  group('privacidade e validação local leve (v3)', () {
+    test('maskEmail nunca expõe o e-mail completo', () {
+      const String full = 'owner@example.com';
+      final String masked = maskEmail(full);
       expect(masked, isNot(full));
-      expect(masked.length, lessThan(full.length));
-      expect(masked.startsWith('bc1qw5'), isTrue);
-      expect(masked.endsWith(full.substring(full.length - 4)), isTrue);
+      expect(masked, 'ow***@example.com');
+      expect(masked.contains(full), isFalse);
+      // Local curto mantém apenas o 1º caractere.
+      expect(maskEmail('a@example.com'), 'a***@example.com');
     });
 
-    test('looksLikeValidAddress por rede', () {
-      expect(
-        looksLikeValidAddress(
-          'Bitcoin',
-          'bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kygt080',
-        ),
-        isTrue,
-      );
-      expect(
-        looksLikeValidAddress('TRC20', 'TXYZsYbSfpBCBZ6CbwPpkbvQyzEB9XcuK8'),
-        isTrue,
-      );
-      expect(
-        looksLikeValidAddress('Dogecoin', 'bc1qw508d6qejxtdg4y5r3zarvary0c5x'),
-        isFalse,
-      );
+    test('isValidDestinationEmail aceita e-mails comuns e rejeita inválidos',
+        () {
+      expect(isValidDestinationEmail('owner@example.com'), isTrue);
+      expect(isValidDestinationEmail('joao.silva+fp@sub.dominio.io'), isTrue);
+      expect(isValidDestinationEmail('sem-arroba'), isFalse);
+      expect(isValidDestinationEmail('a@b'), isFalse);
+      expect(isValidDestinationEmail('com espaco@x.com'), isFalse);
+      expect(isValidDestinationEmail(''), isFalse);
     });
 
     test('watchWithdrawal mascara a providerReference', () async {

@@ -1,16 +1,22 @@
 /**
- * Testes de CONVERSÃO COIN→ativo (config/payouts v2) — puros, sem Firestore.
- * Cobre: coinToAsset (arredondamento determinístico, nunca cria valor),
- * convertCoinToAsset (helper ÚNICO do processador), validateProviderMinimum
- * (mínimo real + taxa do provedor) e o probe read-only (NUNCA envia payout).
+ * Testes de CONVERSÃO COIN→ativo (config/payouts v2/v3) — puros, sem Firestore.
+ * Cobre: coinToAsset/coinsToLitoshi (aritmética inteira determinística),
+ * convertCoinToAsset (v2), convertCoinsToLitoshi + validateProviderLitoshiMinimum
+ * (v3 e-mail FaucetPay), validateProviderMinimum e o probe read-only.
  */
-import { coinToAsset } from '../core/precision';
+import { coinToAsset, coinsToLitoshi } from '../core/precision';
 import {
   convertCoinToAsset,
+  convertCoinsToLitoshi,
+  validateProviderLitoshiMinimum,
   validateProviderMinimum,
   PayoutAssetConfig,
 } from '../processors/processWithdrawals';
-import { decimalToUnits } from '../providers/faucetpay_provider';
+import {
+  decimalToUnits,
+  mapEmailSendError,
+  unitsToDecimalString,
+} from '../providers/faucetpay_provider';
 import { runPayoutProbe } from '../runner';
 
 /** Réplica EXATA dos valores seedados em config/payouts v2. */
@@ -24,6 +30,8 @@ const BTC: PayoutAssetConfig = {
   assetUnitPerCoinScaled: 25n, // 1 coin = 25 sat
   providerMinAssetUnits: 10_000n, // 0.0001 BTC
   providerFeeAssetUnits: 500n,
+  litoshiPerCoin: 0n,
+  providerMinLitoshi: null,
 };
 
 const DOGE: PayoutAssetConfig = {
@@ -36,6 +44,30 @@ const DOGE: PayoutAssetConfig = {
   assetUnitPerCoinScaled: 2_000_000n, // 1 coin = 0.02 DOGE
   providerMinAssetUnits: 500_000_000n, // 5 DOGE
   providerFeeAssetUnits: 50_000_000n, // 0.5 DOGE
+  litoshiPerCoin: 0n,
+  providerMinLitoshi: null,
+};
+
+/**
+ * Réplica EXATA do LTC seedado em config/payouts v3:
+ * destino = e-mail FaucetPay; conversão FIXA 1 COIN = 100 litoshi
+ * (= 0,000001 LTC); mínimo 20 coins; taxa 2 coins; providerMinLitoshi null
+ * até o probe confirmar o mínimo real do envio interno.
+ */
+const LTC_V3: PayoutAssetConfig = {
+  id: 'LTC',
+  network: 'FaucetPayEmail',
+  enabled: true,
+  minWithdrawUnits: 20_000_000n, // 20 coins
+  feeUnits: 2_000_000n, // 2 coins
+  assetDecimals: 8,
+  assetUnitPerCoinScaled: 100n,
+  providerMinAssetUnits: 0n,
+  providerFeeAssetUnits: 0n,
+  rateSource: 'fixed',
+  litoshiPerCoin: 100n,
+  providerMinLitoshi: null,
+  displayRate: '1 COIN = 0,000001 LTC',
 };
 
 describe('coinToAsset (precision)', () => {
@@ -111,6 +143,80 @@ describe('validateProviderMinimum (mínimo/taxa reais da FaucetPay)', () => {
     const conv = convertCoinToAsset(275_000_000n, DOGE)!; // 5.5 DOGE == 5 + 0.5
     expect(conv.grossAssetUnits).toBe(550_000_000n);
     expect(validateProviderMinimum(conv, DOGE)).toEqual({ ok: true });
+  });
+});
+
+describe('coinsToLitoshi (v3 — conversão FIXA inteira)', () => {
+  it('1 COIN = 100 litoshi; 58 coins = 5800 litoshi', () => {
+    expect(coinsToLitoshi(1n, 100n)).toBe(100n);
+    expect(coinsToLitoshi(58n, 100n)).toBe(5800n);
+    expect(coinsToLitoshi(20n, 100n)).toBe(2000n);
+  });
+
+  it('NUNCA produz fração (entrada em coins inteiras, BigInt puro)', () => {
+    for (let c = 0; c <= 250; c += 7) {
+      const out = coinsToLitoshi(BigInt(c), 100n);
+      expect(out % 1n).toBe(0n);
+      expect(out).toBe(BigInt(c) * 100n);
+    }
+  });
+
+  it('rejeita entradas inválidas (falha segura)', () => {
+    expect(() => coinsToLitoshi(-1n, 100n)).toThrow('NEGATIVE_COIN_AMOUNT');
+    expect(() => coinsToLitoshi(1n, 0n)).toThrow('INVALID_ASSET_RATE');
+  });
+});
+
+describe('convertCoinsToLitoshi (helper único v3 do processador)', () => {
+  it('mínimo (20 coins): líquido = (20 − 2) × 100 = 1800 litoshi', () => {
+    const conv = convertCoinsToLitoshi(LTC_V3.minWithdrawUnits, LTC_V3)!;
+    expect(conv.amountCoins).toBe(20n);
+    expect(conv.feeCoins).toBe(2n);
+    expect(conv.receivedLitoshi).toBe(1800n); // 0,000018 LTC
+  });
+
+  it('58 coins ⇒ recebe 5600 litoshi (0,000056 LTC)', () => {
+    const conv = convertCoinsToLitoshi(58_000_000n, LTC_V3)!;
+    expect(conv.receivedLitoshi).toBe(5600n);
+  });
+
+  it('valor abaixo da taxa ⇒ 0 litoshi (nunca negativo)', () => {
+    const conv = convertCoinsToLitoshi(1_000_000n, LTC_V3)!; // 1 coin < fee 2
+    expect(conv.receivedLitoshi).toBe(0n);
+  });
+
+  it('ativo sem litoshiPerCoin configurado ⇒ null (não inventa)', () => {
+    expect(convertCoinsToLitoshi(1n, BTC)).toBeNull();
+  });
+
+  it('validateProviderLitoshiMinimum: null ⇒ passa; real > recebido ⇒ BELOW_PROVIDER_MIN', () => {
+    const conv = convertCoinsToLitoshi(20_000_000n, LTC_V3)!;
+    expect(validateProviderLitoshiMinimum(conv, LTC_V3)).toEqual({ ok: true });
+    const withMin: PayoutAssetConfig = { ...LTC_V3, providerMinLitoshi: 5000n };
+    expect(validateProviderLitoshiMinimum(conv, withMin)).toEqual({
+      ok: false,
+      failureCode: 'BELOW_PROVIDER_MIN',
+    });
+    const okMin: PayoutAssetConfig = { ...LTC_V3, providerMinLitoshi: 1800n };
+    expect(validateProviderLitoshiMinimum(conv, okMin)).toEqual({ ok: true });
+  });
+});
+
+describe('unitsToDecimalString / mapEmailSendError (envio interno por e-mail)', () => {
+  it('litoshi → decimal exato sem float', () => {
+    expect(unitsToDecimalString(100n)).toBe('0.000001');
+    expect(unitsToDecimalString(5800n)).toBe('0.000058');
+    expect(unitsToDecimalString(0n)).toBe('0');
+    expect(unitsToDecimalString(200_000_000n)).toBe('2');
+  });
+
+  it('erros da API mapeados para códigos TIPADOS seguros', () => {
+    expect(mapEmailSendError('Invalid or missing username/email')).toBe('EMAIL_NOT_FOUND');
+    expect(mapEmailSendError('USER_NOT_FOUND')).toBe('EMAIL_NOT_FOUND');
+    expect(mapEmailSendError('Amount too low')).toBe('BELOW_MIN');
+    expect(mapEmailSendError('Insufficient balance')).toBe('INSUFFICIENT_PROVIDER_BALANCE');
+    expect(mapEmailSendError('Rate limit exceeded')).toBe('RATE_LIMIT');
+    expect(mapEmailSendError('whatever else')).toBe('API_ERROR');
   });
 });
 

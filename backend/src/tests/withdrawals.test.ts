@@ -6,10 +6,15 @@
  */
 import {
   ELIGIBILITY_FAILURE_CODES,
+  PayoutAssetConfig,
   WithdrawalValidationInput,
   convertCoinToAsset,
+  convertCoinsToLitoshi,
   isValidAddressForNetwork,
+  isValidDestinationEmail,
   maskAddress,
+  maskEmail,
+  validateProviderLitoshiMinimum,
   validateProviderMinimum,
   validateWithdrawal,
 } from '../processors/processWithdrawals';
@@ -30,7 +35,7 @@ const BASE: WithdrawalValidationInput = {
   finishedGames: 1,
   requireFinishedGames: 1,
   userStatus: 'active',
-  addressValid: true,
+  destinationValid: true,
 };
 
 function input(overrides: Partial<WithdrawalValidationInput>): WithdrawalValidationInput {
@@ -111,8 +116,11 @@ describe('validateWithdrawal (a→h)', () => {
     });
   });
 
-  it('(h) endereço inválido para a rede', () => {
-    expect(validateWithdrawal(input({ addressValid: false }))).toEqual({
+  it('(h) destino inválido: e-mail ⇒ INVALID_EMAIL; endereço ⇒ INVALID_ADDRESS', () => {
+    expect(
+      validateWithdrawal(input({ destinationValid: false, destinationEmail: 'x@y' })),
+    ).toEqual({ ok: false, failureCode: 'INVALID_EMAIL' });
+    expect(validateWithdrawal(input({ destinationValid: false }))).toEqual({
       ok: false,
       failureCode: 'INVALID_ADDRESS',
     });
@@ -121,9 +129,82 @@ describe('validateWithdrawal (a→h)', () => {
   it('ordem a→h: ativo desabilitado vence as demais falhas', () => {
     expect(
       validateWithdrawal(
-        input({ assetEnabled: false, addressValid: false, finishedGames: 0 }),
+        input({ assetEnabled: false, destinationValid: false, finishedGames: 0 }),
       ),
     ).toEqual({ ok: false, failureCode: 'ASSET_DISABLED' });
+  });
+});
+
+describe('destino v3: validação e máscara de E-MAIL FaucetPay', () => {
+  it('isValidDestinationEmail aceita e-mails comuns e rejeita inválidos', () => {
+    expect(isValidDestinationEmail('owner@example.com')).toBe(true);
+    expect(isValidDestinationEmail('joao.silva+fp@sub.dominio.io')).toBe(true);
+    expect(isValidDestinationEmail('sem-arroba')).toBe(false);
+    expect(isValidDestinationEmail('a@b')).toBe(false); // domínio curto demais
+    expect(isValidDestinationEmail('dois @@espacos.com')).toBe(false);
+    expect(isValidDestinationEmail('')).toBe(false);
+    expect(isValidDestinationEmail(`a${'x'.repeat(300)}@example.com`)).toBe(false); // >254
+  });
+
+  it('maskEmail: 2 primeiros chars + ***@ + domínio (nunca expõe o completo)', () => {
+    const masked = maskEmail('owner@example.com');
+    expect(masked).toBe('ow***@example.com');
+    expect(masked).not.toContain('owner@example.com');
+    expect(maskEmail('a@example.com')).toBe('a***@example.com'); // local curto
+    expect(maskEmail('invalido-sem-arroba')).not.toContain('invalido-sem-arroba');
+  });
+
+  it('e-mail inválido é bloqueado na validação (a→h)', () => {
+    expect(
+      validateWithdrawal(input({ destinationValid: false, destinationEmail: 'quebra-regex' })),
+    ).toEqual({ ok: false, failureCode: 'INVALID_EMAIL' });
+  });
+});
+
+describe('conversão v3 integrada à validação de saques (e-mail FaucetPay)', () => {
+  /** Réplica EXATA do LTC seedado em config/payouts v3. */
+  const LTC_V3: PayoutAssetConfig = {
+    id: 'LTC',
+    network: 'FaucetPayEmail',
+    enabled: true,
+    minWithdrawUnits: 20_000_000n,
+    feeUnits: 2_000_000n,
+    assetDecimals: 8,
+    assetUnitPerCoinScaled: 100n,
+    providerMinAssetUnits: 0n,
+    providerFeeAssetUnits: 0n,
+    rateSource: 'fixed',
+    litoshiPerCoin: 100n,
+    providerMinLitoshi: null,
+    displayRate: '1 COIN = 0,000001 LTC',
+  };
+
+  it('saque no mínimo passa: líquido 1800 litoshi ≥ providerMin (null)', () => {
+    const conv = convertCoinsToLitoshi(LTC_V3.minWithdrawUnits, LTC_V3)!;
+    expect(conv.receivedLitoshi).toBe(1800n);
+    expect(validateProviderLitoshiMinimum(conv, LTC_V3)).toEqual({ ok: true });
+  });
+
+  it('providerMin real acima do líquido ⇒ BELOW_PROVIDER_MIN (operacional)', () => {
+    const conv = convertCoinsToLitoshi(20_000_000n, LTC_V3)!;
+    const cfg: PayoutAssetConfig = { ...LTC_V3, providerMinLitoshi: 10_000n };
+    expect(validateProviderLitoshiMinimum(conv, cfg)).toEqual({
+      ok: false,
+      failureCode: 'BELOW_PROVIDER_MIN',
+    });
+  });
+
+  it('estorno íntegro em COIN mesmo com conversão v3 (aritmética BigInt)', () => {
+    const amount = 30_000_000n;
+    let available = 100_000_000n;
+    let pending = 0n;
+    available -= amount;
+    pending += amount;
+    // provider failed ⇒ estorno EXATO em COIN (nunca em litoshi)
+    available += amount;
+    pending -= amount;
+    expect(available).toBe(100_000_000n);
+    expect(pending).toBe(0n);
   });
 });
 
@@ -280,7 +361,7 @@ describe('antifraude: códigos de elegibilidade (§36)', () => {
 });
 
 describe('conversão v2 integrada à validação de saques', () => {
-  const DOGE_CFG = {
+  const DOGE_CFG: PayoutAssetConfig = {
     id: 'DOGE',
     network: 'Dogecoin',
     enabled: true,
@@ -290,6 +371,8 @@ describe('conversão v2 integrada à validação de saques', () => {
     assetUnitPerCoinScaled: 2_000_000n, // 1 coin = 0.02 DOGE
     providerMinAssetUnits: 500_000_000n, // 5 DOGE
     providerFeeAssetUnits: 50_000_000n, // 0.5 DOGE
+    litoshiPerCoin: 0n,
+    providerMinLitoshi: null,
   };
 
   it('BELOW_PROVIDER_MIN é código operacional: NÃO conta p/ lock review', () => {

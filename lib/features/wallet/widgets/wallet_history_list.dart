@@ -4,21 +4,24 @@ import '../../../core/theme/app_colors.dart';
 import '../../../core/utils/coin_format.dart';
 
 /// Entrada unificada do histórico da carteira (mescla de rewards/{uid}/items
-/// com saques). Endereço SEMPRE addressMasked — nunca o completo.
+/// com saques). Destino SEMPRE mascarado ([destinationMasked] — e-mail
+/// FaucetPay no fluxo v3) — nunca o valor completo.
 class WalletHistoryItem {
   const WalletHistoryItem({
     required this.title,
     required this.amount,
     this.date,
     this.status, // apenas p/ saques: processing | completed | failed
-    this.addressMasked,
+    this.destinationMasked,
   });
 
   final String title;
   final BigInt amount; // negativo = saída
   final DateTime? date;
   final String? status;
-  final String? addressMasked;
+
+  /// Máscara do destino (ex.: 'ow***@example.com') — NUNCA o completo.
+  final String? destinationMasked;
 
   bool get isWithdrawal => status != null;
 }
@@ -97,11 +100,11 @@ class _HistoryTile extends StatelessWidget {
                     ],
                   ],
                 ),
-                if (item.addressMasked != null)
+                if (item.destinationMasked != null)
                   Padding(
                     padding: const EdgeInsets.only(top: 2),
                     child: Text(
-                      item.addressMasked!, // SEMPRE mascarado
+                      item.destinationMasked!, // SEMPRE mascarado
                       style: TextStyle(
                         fontSize: 11,
                         color: AppColors.textSecondary.withValues(alpha: 0.85),

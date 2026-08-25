@@ -8,26 +8,58 @@ import '../../../core/widgets/neon_button.dart';
 import '../../../core/widgets/neon_text_field.dart';
 
 /// Dados do ativo selecionado que o form precisa (desacoplado p/ testes).
+/// v3: destino = E-MAIL da conta FaucetPay; conversão FIXA em litoshi/coin
+/// (1 COIN = 100 litoshi = 0,000001 LTC) — EXIBIÇÃO derivada da config do
+/// servidor (nunca autoridade).
 class WithdrawAssetInfo {
   const WithdrawAssetInfo({
     required this.id,
     required this.network,
     required this.minWithdrawUnits,
     required this.feeUnits,
+    this.litoshiPerCoin = 100,
+    this.displayRate = '1 COIN = 0,000001 LTC',
   });
 
   final String id;
   final String network;
   final BigInt minWithdrawUnits;
   final BigInt feeUnits;
+
+  /// Conversão FIXA: 1 COIN = [litoshiPerCoin] litoshi (config/payouts v3).
+  final int litoshiPerCoin;
+
+  /// Rótulo de exibição da conversão (definido pelo servidor).
+  final String displayRate;
 }
 
-/// Formulário de SAQUE:
-/// - endereço com colar da área de transferência + validação LOCAL leve
-///   (apenas aviso — a autoridade é o runner);
+/// Converte units de coin → litoshi (aritmética INTEIRA; espelha o backend:
+/// litoshi = (coins − feeCoins) × litoshiPerCoin). Retorna null se negativo.
+BigInt? receivedLitoshi(BigInt amountUnits, WithdrawAssetInfo asset) {
+  final BigInt scale = BigInt.from(1000000);
+  final BigInt coins = amountUnits ~/ scale;
+  final BigInt feeCoins = asset.feeUnits ~/ scale;
+  final BigInt net = coins - feeCoins;
+  if (net <= BigInt.zero) return null;
+  return net * BigInt.from(asset.litoshiPerCoin);
+}
+
+/// Formata litoshi como decimal LTC pt-BR (ex.: 5800 → "0,000058").
+String formatLitoshi(BigInt litoshi) {
+  final BigInt whole = litoshi ~/ BigInt.from(100000000);
+  final BigInt frac = litoshi % BigInt.from(100000000);
+  String fracStr = frac.toString().padLeft(8, '0');
+  fracStr = fracStr.replaceFirst(RegExp(r'0+$'), '');
+  if (fracStr.isEmpty) return '$whole';
+  return '$whole,$fracStr';
+}
+
+/// Formulário de SAQUE (v3):
+/// - campo "E-mail da FaucetPay" com validação LOCAL leve (a autoridade é o
+///   runner + rules) e AVISO fixo sob o campo;
 /// - valor com botão MÁX. (= saldo disponível);
-/// - taxa e valor recebido EXIBIDOS a partir da config do servidor
-///   ("valores definidos pelo servidor") — nada calculado pelo cliente;
+/// - taxa e recebido EXIBIDOS a partir da config do servidor ("valores
+///   definidos pelo servidor") — nada calculado/decidido pelo cliente;
 /// - CTA chanfrado SOLICITAR SAQUE + aviso de segurança.
 class WithdrawForm extends StatefulWidget {
   const WithdrawForm({
@@ -41,8 +73,8 @@ class WithdrawForm extends StatefulWidget {
   final WithdrawAssetInfo asset;
   final BigInt availableBalance;
 
-  /// Disparado no submit com o valor (units) e o endereço digitado.
-  final void Function(BigInt amountUnits, String address) onSubmit;
+  /// Disparado no submit com o valor (units) e o E-MAIL FaucetPay digitado.
+  final void Function(BigInt amountUnits, String destinationEmail) onSubmit;
   final bool submitting;
 
   @override
@@ -50,16 +82,15 @@ class WithdrawForm extends StatefulWidget {
 }
 
 class _WithdrawFormState extends State<WithdrawForm> {
-  final TextEditingController _addressController = TextEditingController();
+  final TextEditingController _emailController = TextEditingController();
   final TextEditingController _amountController = TextEditingController();
   final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
-  bool _addressWarningShown = false;
 
   static final RegExp _amountRe = RegExp(r'^\d+([.,]\d{1,6})?$');
 
   @override
   void dispose() {
-    _addressController.dispose();
+    _emailController.dispose();
     _amountController.dispose();
     super.dispose();
   }
@@ -76,31 +107,13 @@ class _WithdrawFormState extends State<WithdrawForm> {
 
   BigInt get _fee => widget.asset.feeUnits;
 
-  Future<void> _pasteAddress() async {
-    final ClipboardData? data = await Clipboard.getData('text/plain');
-    final String? text = data?.text?.trim();
-    if (text != null && text.isNotEmpty) {
-      _addressController.text = text;
-      _checkAddressWarning(text);
+  /// Valor base p/ a linha de exibição: digitado (≥ mínimo) ou o mínimo.
+  BigInt get _displayAmount {
+    final BigInt? typed = _parseAmountUnits(_amountController.text);
+    if (typed == null || typed < widget.asset.minWithdrawUnits) {
+      return widget.asset.minWithdrawUnits;
     }
-  }
-
-  void _checkAddressWarning(String address) {
-    final bool valid =
-        looksLikeValidAddress(widget.asset.network, address.trim());
-    if (!valid && !_addressWarningShown && address.trim().length >= 20) {
-      _addressWarningShown = true;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Atenção: o endereço não parece válido para esta rede. '
-            'Confira antes de enviar.',
-          ),
-          backgroundColor: AppColors.error,
-        ),
-      );
-    }
-    if (valid) _addressWarningShown = false;
+    return typed;
   }
 
   void _applyMax() {
@@ -115,43 +128,55 @@ class _WithdrawFormState extends State<WithdrawForm> {
     if (!(_formKey.currentState?.validate() ?? false)) return;
     final BigInt? amount = _parseAmountUnits(_amountController.text);
     if (amount == null || amount <= BigInt.zero) return;
-    widget.onSubmit(amount, _addressController.text.trim());
+    widget.onSubmit(amount, _emailController.text.trim());
   }
 
   @override
   Widget build(BuildContext context) {
     final BigInt min = widget.asset.minWithdrawUnits;
+    final BigInt? receiveLitoshi = receivedLitoshi(_displayAmount, widget.asset);
 
     return Form(
       key: _formKey,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
-          // Endereço
+          // E-mail da conta FaucetPay (destino v3 — transferência interna)
+          NeonTextField(
+            controller: _emailController,
+            labelText: 'E-mail da FaucetPay',
+            hintText: 'Digite o e-mail da sua conta FaucetPay',
+            keyboardType: TextInputType.emailAddress,
+            inputFormatters: <TextInputFormatter>[
+              FilteringTextInputFormatter.deny(RegExp(r'\s')),
+            ],
+            validator: (String? v) {
+              final String value = (v ?? '').trim();
+              if (value.isEmpty) return 'Informe o e-mail da FaucetPay.';
+              if (!isValidDestinationEmail(value)) {
+                return 'E-mail inválido.';
+              }
+              return null;
+            },
+          ),
+          const SizedBox(height: 6),
+          // AVISO FIXO — destino é SEMPRE o e-mail FaucetPay (interno)
           Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
+              Icon(Icons.info_outline,
+                  size: 13, color: AppColors.gold.withValues(alpha: 0.9)),
+              const SizedBox(width: 6),
               Expanded(
-                child: NeonTextField(
-                  controller: _addressController,
-                  labelText: 'Endereço ${widget.asset.network}',
-                  hintText: 'Cole o endereço da carteira',
-                  onChanged: _checkAddressWarning,
-                  validator: (String? v) {
-                    final String value = (v ?? '').trim();
-                    if (value.isEmpty) return 'Informe o endereço.';
-                    if (value.length < 20 || value.length > 128) {
-                      return 'Endereço inválido.';
-                    }
-                    return null;
-                  },
+                child: Text(
+                  'O saque é enviado para o seu e-mail da FaucetPay — '
+                  'não use endereço externo de carteira.',
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    height: 1.35,
+                    color: AppColors.textSecondary.withValues(alpha: 0.95),
+                  ),
                 ),
-              ),
-              const SizedBox(width: 8),
-              IconButton(
-                key: const ValueKey<String>('paste_address'),
-                tooltip: 'Colar',
-                onPressed: _pasteAddress,
-                icon: const Icon(Icons.content_paste, color: AppColors.cyan),
               ),
             ],
           ),
@@ -170,6 +195,7 @@ class _WithdrawFormState extends State<WithdrawForm> {
                 inputFormatters: <TextInputFormatter>[
                   FilteringTextInputFormatter.allow(RegExp(r'[\d.,]')),
                 ],
+                onChanged: (_) => setState(() {}),
                 validator: (String? v) {
                   final BigInt? amount = _parseAmountUnits(v ?? '');
                   if (amount == null || amount <= BigInt.zero) {
@@ -202,7 +228,7 @@ class _WithdrawFormState extends State<WithdrawForm> {
             ],
           ),
           const SizedBox(height: 8),
-          // Taxa e recebido — SEMPRE da config do servidor.
+          // Taxa e recebido — SEMPRE derivados da config do servidor.
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(12),
@@ -219,11 +245,8 @@ class _WithdrawFormState extends State<WithdrawForm> {
                 Text(
                   'Taxa: ${CoinFormat.formatMinimalUnits(_fee)} COIN · '
                   'Você recebe: '
-                  '${CoinFormat.formatMinimalUnits(
-                        widget.availableBalance >= min
-                            ? (min - _fee)
-                            : BigInt.zero,
-                      )} COIN',
+                  '${receiveLitoshi == null ? '—' : formatLitoshi(receiveLitoshi)} LTC',
+                  key: const ValueKey<String>('fee_line'),
                   style: const TextStyle(
                     fontSize: 12.5,
                     color: AppColors.textPrimary,
@@ -231,7 +254,8 @@ class _WithdrawFormState extends State<WithdrawForm> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'Valores definidos pelo servidor.',
+                  '${widget.asset.displayRate} · Valores e conversão '
+                  'definidos pelo servidor.',
                   style: TextStyle(
                     fontSize: 11,
                     fontStyle: FontStyle.italic,

@@ -25,6 +25,7 @@ String withdrawalErrorMessage(String? errorCode) {
       return 'Saldo disponível insuficiente para este saque.';
     case 'BELOW_MINIMUM':
     case 'AMOUNT_TOO_LOW':
+    case 'BELOW_MIN':
       return 'Valor abaixo do mínimo definido pelo servidor.';
     case 'COOLDOWN_ACTIVE':
       return 'Aguarde o intervalo entre saques (24h).';
@@ -37,7 +38,15 @@ String withdrawalErrorMessage(String? errorCode) {
     case 'ACCOUNT_IN_REVIEW':
       return 'Conta em análise. Saques bloqueados temporariamente.';
     case 'INVALID_ADDRESS':
-      return 'Endereço inválido para a rede selecionada.';
+      return 'Destino inválido para o saque.';
+    case 'INVALID_EMAIL':
+      return 'E-mail da FaucetPay inválido.';
+    case 'EMAIL_NOT_FOUND':
+      return 'E-mail não encontrado na FaucetPay. Confira sua conta.';
+    case 'INSUFFICIENT_PROVIDER_BALANCE':
+      return 'Provedor temporariamente sem saldo. Tente mais tarde.';
+    case 'RATE_LIMIT':
+      return 'Muitas solicitações ao provedor. Tente mais tarde.';
     case 'ASSET_DISABLED':
       return 'Ativo temporariamente indisponível para saque.';
     default:
@@ -55,29 +64,26 @@ class WithdrawalException implements Exception {
   String toString() => message;
 }
 
-/// Máscara segura de endereço p/ exibição local: 6 primeiros + '…' + 4
-/// últimos (espelha maskAddress do backend).
-String maskWalletAddress(String address) {
-  if (address.length <= 10) return '*' * address.length;
-  return '${address.substring(0, 6)}…${address.substring(address.length - 4)}';
+/// Máscara segura de E-MAIL p/ exibição local: 2 primeiros caracteres do
+/// local + '***@' + domínio (espelha maskEmail do backend). O e-mail
+/// completo NUNCA é exibido em UI/histórico.
+String maskEmail(String email) {
+  final int at = email.indexOf('@');
+  if (at <= 0) return '*' * email.length.clamp(0, 8);
+  final String local = email.substring(0, at);
+  final String domain = email.substring(at + 1);
+  final String prefix = local.substring(0, local.length < 2 ? local.length : 2);
+  return '$prefix***@$domain';
 }
 
-/// Validação LOCAL leve do endereço (aviso apenas — a autoridade é o runner).
-bool looksLikeValidAddress(String network, String address) {
-  switch (network.toUpperCase()) {
-    case 'BITCOIN':
-      return RegExp(r'^(?:[13][a-km-zA-HJ-NP-Z1-9]{25,34}|bc1[a-z0-9]{11,71})$')
-          .hasMatch(address);
-    case 'LITECOIN':
-      return RegExp(r'^(?:[LM3][a-km-zA-HJ-NP-Z1-9]{26,33}|ltc1[a-z0-9]{11,71})$')
-          .hasMatch(address);
-    case 'DOGECOIN':
-      return RegExp(r'^D[a-km-zA-HJ-NP-Z1-9]{25,34}$').hasMatch(address);
-    case 'TRC20':
-      return RegExp(r'^T[1-9A-HJ-NP-Za-km-z]{33}$').hasMatch(address);
-    default:
-      return false;
-  }
+/// Regex de e-mail (formato básico; a autoridade é o backend/rules).
+final RegExp kDestinationEmailRe = RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]{2,}$');
+
+/// Validação LOCAL leve do e-mail FaucetPay (aviso apenas — a autoridade é
+/// o runner + rules). Comprimento dentro do aceito pelas rules (6..254).
+bool isValidDestinationEmail(String email) {
+  final String v = email.trim();
+  return v.length >= 6 && v.length <= 254 && kDestinationEmailRe.hasMatch(v);
 }
 
 /// Serviço de SAQUE — o cliente SÓ cria a intenção e observa o resultado.
@@ -110,13 +116,13 @@ class WithdrawalService {
   }
 
   /// Cria a intent de saque com retry seguro (MESMO clientRequestId em todas
-  /// as tentativas). Retorna o requestId para observação do resultado.
+  /// as tentativas). Destino = E-MAIL da conta FaucetPay (v3, transferência
+  /// interna). Retorna o requestId para observação do resultado.
   Future<String> requestWithdrawal({
     required String uid,
     required String asset,
-    required String network,
     required BigInt amountUnits,
-    required String address,
+    required String destinationEmail,
     String? clientRequestId,
     String clientVersion = 'dev',
     int maxAttempts = 3,
@@ -124,18 +130,21 @@ class WithdrawalService {
     if (amountUnits <= BigInt.zero) {
       throw WithdrawalException('Valor inválido.');
     }
+    final String email = destinationEmail.trim();
+    if (!isValidDestinationEmail(email)) {
+      throw WithdrawalException('E-mail da FaucetPay inválido.');
+    }
     final String requestId = clientRequestId ?? generateClientRequestId();
-    final String masked = maskWalletAddress(address);
+    final String masked = maskEmail(email);
     for (int attempt = 0; attempt < maxAttempts; attempt++) {
       try {
         await _repository.createWithdrawalIntent(
           clientRequestId: requestId,
           uid: uid,
           asset: asset,
-          network: network,
           amountUnits: amountUnits,
-          address: address,
-          addressMasked: masked,
+          destinationEmail: email,
+          destinationMasked: masked,
           clientVersion: clientVersion,
         );
         return requestId;

@@ -241,9 +241,12 @@ service cloud.firestore {
     }
 
     // ---- Intenções de SAQUE: cliente só CRIA a intenção -----------------
-    // Campos EXATOS {uid,asset,network,amountUnits,address,addressMasked,
-    // clientRequestId,createdAt,clientVersion}; amountUnits > 0. Toda a
-    // validação econômica/antifraude é do RUNNER (sem update/delete cliente).
+    // v3 — DESTINO = E-MAIL da conta FaucetPay (transferência INTERNA;
+    // NUNCA endereço externo de carteira). Campos EXATOS {uid, asset,
+    // amountUnits, destinationEmail, destinationMasked, clientRequestId,
+    // createdAt, clientVersion}; amountUnits > 0; destinationEmail bate
+    // regex de e-mail. Toda a validação econômica/antifraude é do RUNNER
+    // (sem update/delete cliente).
     match /withdrawalIntents/{intentId} {
       allow read: if isSignedIn()
         && resource.data.uid == request.auth.uid;
@@ -251,22 +254,23 @@ service cloud.firestore {
       allow create: if isSignedIn()
         && request.resource.data.uid == request.auth.uid
         && request.resource.data.keys().hasOnly(
-             ['uid', 'asset', 'network', 'amountUnits', 'address',
-              'addressMasked', 'clientRequestId', 'createdAt', 'clientVersion'])
+             ['uid', 'asset', 'amountUnits', 'destinationEmail',
+              'destinationMasked', 'clientRequestId', 'createdAt',
+              'clientVersion'])
         && request.resource.data.asset is string
         && request.resource.data.asset.size() > 0
         && request.resource.data.asset.size() <= 16
-        && request.resource.data.network is string
-        && request.resource.data.network.size() > 0
-        && request.resource.data.network.size() <= 32
         && request.resource.data.amountUnits is int
         && request.resource.data.amountUnits > 0
-        && request.resource.data.address is string
-        && request.resource.data.address.size() >= 20
-        && request.resource.data.address.size() <= 128
-        && request.resource.data.addressMasked is string
-        && request.resource.data.addressMasked.size() > 0
-        && request.resource.data.addressMasked.size() <= 32
+        && request.resource.data.destinationEmail is string
+        && request.resource.data.destinationEmail.size() >= 6
+        && request.resource.data.destinationEmail.size() <= 254
+        && request.resource.data.destinationEmail.matches(
+             r'^[^@\s]+@[^@\s]+\.[^@\s]{2,}$')
+        && request.resource.data.destinationMasked is string
+        && request.resource.data.destinationMasked.size() > 0
+        && request.resource.data.destinationMasked.size() <= 64
+        && request.resource.data.destinationMasked.contains('***@')
         && request.resource.data.clientRequestId is string
         && request.resource.data.clientRequestId.size() >= 8
         && request.resource.data.clientRequestId.size() <= 128

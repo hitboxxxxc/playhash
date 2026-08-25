@@ -49,6 +49,50 @@ function mapApiError(apiCode: string): string {
 }
 
 /**
+ * Erros do ENVIO INTERNO (por e-mail/usuário FaucetPay) mapeados para códigos
+ * TIPADOS seguros. A mensagem real da API varia ("Invalid or missing
+ * username/email", "USER_NOT_FOUND", …) ⇒ matching por substring, em caixa
+ * baixa. NUNCA inclui o e-mail no código/retorno.
+ */
+export function mapEmailSendError(rawMessage: string): string {
+  const msg = String(rawMessage ?? '').toLowerCase();
+  if (
+    msg.includes('username') ||
+    msg.includes('user_not_found') ||
+    msg.includes('invalid_email') ||
+    msg.includes('email not found')
+  ) {
+    return 'EMAIL_NOT_FOUND';
+  }
+  if (msg.includes('amount too low') || msg.includes('amount_too_low')) {
+    return 'BELOW_MIN';
+  }
+  if (msg.includes('insufficient')) {
+    return 'INSUFFICIENT_PROVIDER_BALANCE';
+  }
+  if (msg.includes('rate limit') || msg.includes('too many')) {
+    return 'RATE_LIMIT';
+  }
+  if (msg.includes('invalid api key')) {
+    return 'INVALID_CREDENTIALS';
+  }
+  return 'API_ERROR';
+}
+
+/**
+ * BigInt em menores unidades → string decimal EXATA do ativo (sem float).
+ * Ex.: 100n com 8 decimais ⇒ "0.000001" (1 COIN = 0,000001 LTC).
+ */
+export function unitsToDecimalString(units: bigint, decimals = 8): string {
+  const neg = units < 0n;
+  const abs = (neg ? -units : units).toString().padStart(decimals + 1, '0');
+  const intPart = abs.slice(0, abs.length - decimals);
+  const fracPart = abs.slice(abs.length - decimals).replace(/0+$/, '');
+  const s = fracPart ? `${intPart}.${fracPart}` : intPart;
+  return neg ? `-${s}` : s;
+}
+
+/**
  * Mensagem operacional sanitizada p/ log: redige qualquer token longo
  * (padrão de chave/endereço) e trunca. Nunca expõe credenciais.
  */
@@ -67,10 +111,59 @@ export class FaucetPayProvider implements PayoutProvider, ReadonlyPayoutProvider
     this.apiKey = key;
   }
 
+  /**
+   * Ponto de entrada único do processador. Fluxo v3 (destinationEmail
+   * presente) delega ao envio INTERNO por e-mail; fluxo legado usa endereço.
+   */
   async sendPayout(req: PayoutRequest): Promise<PayoutResult> {
-    // amount em moeda inteira é exigido pela API; units → string decimal.
-    const amountDecimal = (Number(req.amountUnits) / 1e8).toString();
+    if (req.destinationEmail) {
+      return this.sendToUser({
+        asset: req.asset,
+        amountLitoshi: req.amountUnits,
+        email: req.destinationEmail,
+      });
+    }
+    return this.postSend(
+      {
+        api_key: this.apiKey,
+        to: req.address,
+        currency: req.asset,
+        amount: unitsToDecimalString(req.amountUnits, 8),
+      },
+      mapApiError,
+    );
+  }
 
+  /**
+   * ENVIO INTERNO FaucetPay POR E-MAIL (transferência entre usuários da
+   * plataforma — NUNCA endereço externo de carteira). Mesma política de
+   * retry do sendPayout: apenas rede/5xx/timeout são reenviados; resposta
+   * definitiva NUNCA é reenviada (evita pagamento duplicado). O e-mail é
+   * usado SOMENTE no corpo da requisição — jamais em logs/erros.
+   */
+  async sendToUser(params: {
+    asset: string;
+    /** Valor LÍQUIDO em litoshi (menores unidades do ativo). */
+    amountLitoshi: bigint;
+    /** E-mail da conta FaucetPay do destinatário (nunca logado). */
+    email: string;
+  }): Promise<PayoutResult> {
+    return this.postSend(
+      {
+        api_key: this.apiKey,
+        to: params.email,
+        currency: params.asset,
+        amount: unitsToDecimalString(params.amountLitoshi, 8),
+      },
+      mapEmailSendError,
+    );
+  }
+
+  /** POST /send compartilhado com retry APENAS p/ ambiguidade (rede/5xx). */
+  private async postSend(
+    form: Record<string, string>,
+    mapError: (raw: string) => string,
+  ): Promise<PayoutResult> {
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
@@ -78,12 +171,7 @@ export class FaucetPayProvider implements PayoutProvider, ReadonlyPayoutProvider
         const res = await fetch(FAUCETPAY_SEND_URL, {
           method: 'POST',
           headers: { 'content-type': 'application/x-www-form-urlencoded' },
-          body: new URLSearchParams({
-            api_key: this.apiKey,
-            to: req.address,
-            currency: req.asset,
-            amount: amountDecimal,
-          }),
+          body: new URLSearchParams(form),
           signal: controller.signal,
         });
 
@@ -108,7 +196,7 @@ export class FaucetPayProvider implements PayoutProvider, ReadonlyPayoutProvider
         // Resposta DEFINITIVA de erro — sem retry (evita duplicar pagamento).
         return {
           status: 'failed',
-          errorCode: mapApiError(String(body?.message ?? '')),
+          errorCode: mapError(String(body?.message ?? '')),
         };
       } catch (err) {
         const aborted = err instanceof Error && err.name === 'AbortError';

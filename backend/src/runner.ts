@@ -174,6 +174,36 @@ export async function runPayoutProbe(
       console.log(`[runner] payoutProbe fee asset=${f.asset} feeUnits=${f.feeUnits}${min}`);
     }
   }
+
+  // v3: mínimo REAL do envio INTERNO por e-mail (LTC/litoshi). Quando a API
+  // expõe o mínimo, compara com o providerMinLitoshi da config e recomenda
+  // ajuste de minWithdrawCoins — o AJUSTE é registrado no relatório (a edição
+  // da config continua sendo ação humana/seed).
+  const ltcCfg = payouts.assets.find((a) => a.id.toUpperCase() === 'LTC');
+  if (ltcCfg) {
+    const cfgMin = ltcCfg.providerMinLitoshi;
+    console.log(
+      `[runner] payoutProbe ltc providerMinLitoshi(config)=${cfgMin ?? 'null'}` +
+        ` minWithdrawCoins=${ltcCfg.minWithdrawUnits / 1_000_000n}`,
+    );
+    if (fees.ok) {
+      const ltcFee = fees.data.find((f) => f.asset.toUpperCase() === 'LTC');
+      if (ltcFee?.minUnits !== undefined) {
+        console.log(`[runner] payoutProbe ltc providerMinLitoshi(real)=${ltcFee.minUnits}`);
+        if (cfgMin === null || ltcFee.minUnits > cfgMin) {
+          console.log(
+            '[runner] payoutProbe RECOMMENDATION: mínimo REAL > config — ajustar ' +
+              'providerMinLitoshi/minWithdrawCoins em config/payouts (seed v3) e relatar.',
+          );
+        }
+      } else {
+        console.log(
+          '[runner] payoutProbe ltc providerMinLitoshi(real)=UNAVAILABLE ' +
+            '(API não expõe mínimo do envio interno)',
+        );
+      }
+    }
+  }
   return { executed: true, keyValid: true };
 }
 

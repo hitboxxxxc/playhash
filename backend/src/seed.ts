@@ -533,6 +533,48 @@ const PAYOUTS_ASSET_V2: Record<string, Record<string, unknown>> = {
   },
 };
 
+/**
+ * Config de SAQUES v3 (config/payouts version 3) — DESTINO = E-MAIL da conta
+ * FaucetPay do usuário (transferência INTERNA; NUNCA endereço externo).
+ *  - destinationType:'faucetpay_email' e futureRateSource:'usd_auto'
+ *    (documental: no futuro a conversão será em USD calculada automaticamente;
+ *    NENHUM feed é implementado agora).
+ *  - LTC único habilitado com conversão FIXA: litoshiPerCoin = 100 ⇒
+ *    1 COIN = 100 litoshi = 0,000001 LTC (aritmética inteira no processador).
+ *  - providerMinLitoshi = null até o probe payoutProbe confirmar o mínimo
+ *    REAL do envio interno (se real > config, ajustar minWithdrawCoins).
+ *  - Campos numéricos legados (units) mantidos em sincronia p/ compatibilidade
+ *    do processador/probe: minWithdrawUnits = minWithdrawCoins × 1e6 etc.
+ *  - BTC/DOGE/USDT desabilitados ('conversão em definição').
+ */
+const PAYOUTS_V3_META: Record<string, unknown> = {
+  destinationType: 'faucetpay_email',
+  futureRateSource: 'usd_auto', // documental — sem feed implementado
+};
+
+const PAYOUTS_ASSET_V3: Record<string, Record<string, unknown>> = {
+  LTC: {
+    network: 'FaucetPayEmail',
+    enabled: true,
+    rateSource: 'fixed',
+    litoshiPerCoin: 100,
+    displayRate: '1 COIN = 0,000001 LTC',
+    minWithdrawCoins: 20,
+    feeCoins: 2,
+    providerMinLitoshi: null, // preencher via payoutProbe (mínimo real)
+    // Compat numérica (units de coin; 1 coin = 1e6 units):
+    minWithdrawUnits: 20_000_000, // 20 coins
+    feeUnits: 2_000_000, // 2 coins
+    assetDecimals: 8,
+    assetUnitPerCoinScaled: 100, // 1 coin = 100 litoshi (mesma taxa fixa)
+    providerMinAssetUnits: 0, // v3 usa providerMinLitoshi
+    providerFeeAssetUnits: 0, // v3 desconta feeCoins ANTES da conversão
+  },
+  BTC: { enabled: false, note: 'conversão em definição' },
+  DOGE: { enabled: false, note: 'conversão em definição' },
+  USDT: { enabled: false, note: 'conversão em definição' },
+};
+
 async function createIfMissing(
   db: ReturnType<typeof initAdmin>['db'],
   docPath: string,
@@ -654,6 +696,44 @@ async function upgradePayoutsToV2(
   return 'upgraded';
 }
 
+/**
+ * Upgrade IDEMPOTENTE de config/payouts para v3 (saque por E-MAIL FaucetPay):
+ * doc ausente ⇒ cria já em v3; version < 3 ⇒ MERGE dos campos v3 por ativo
+ * (por id) + metadados destinationType/futureRateSource + version=3. Nunca
+ * remove campos v1/v2. Rodar novamente = no-op.
+ */
+async function upgradePayoutsToV3(
+  db: ReturnType<typeof initAdmin>['db'],
+): Promise<'created' | 'upgraded' | 'current'> {
+  const ref = db.doc('config/payouts');
+  const snap = await ref.get();
+  const applyV3 = (assets: Record<string, unknown>[]) =>
+    assets.map((a) => ({
+      ...a,
+      ...(typeof a.id === 'string' ? PAYOUTS_ASSET_V3[a.id] : undefined),
+    }));
+  if (!snap.exists) {
+    const v1Assets = PAYOUTS_V1.assets as Record<string, unknown>[];
+    await ref.set({
+      ...PAYOUTS_V1,
+      ...PAYOUTS_V3_META,
+      assets: applyV3(v1Assets),
+      version: 3,
+    });
+    return 'created';
+  }
+  const version = typeof snap.get('version') === 'number' ? Number(snap.get('version')) : 1;
+  if (version >= 3) return 'current';
+  const existingAssets = Array.isArray(snap.get('assets'))
+    ? (snap.get('assets') as Record<string, unknown>[])
+    : (PAYOUTS_V1.assets as Record<string, unknown>[]);
+  await ref.set(
+    { ...PAYOUTS_V3_META, assets: applyV3(existingAssets), version: 3 },
+    { merge: true },
+  );
+  return 'upgraded';
+}
+
 async function main(): Promise<void> {
   if (process.env.NODE_ENV === 'production') {
     throw new Error('SEED_BLOCKED_IN_PRODUCTION');
@@ -682,6 +762,7 @@ async function main(): Promise<void> {
     console.log(`[seed] leagues/${id}: ${await createIfMissing(db, `leagues/${id}`, data)}`);
   }
   console.log(`[seed] config/payouts (v2): ${await upgradePayoutsToV2(db)}`);
+  console.log(`[seed] config/payouts (v3): ${await upgradePayoutsToV3(db)}`);
   console.log(`[seed] config/ads (v1): ${await createIfMissing(db, 'config/ads', ADS_V1)}`);
   console.log(`[seed] seasons/season-01: ${await createIfMissing(db, 'seasons/season-01', seasonDoc())}`);
   for (const [id, data] of Object.entries(SEASON_MISSIONS)) {

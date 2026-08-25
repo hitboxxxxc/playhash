@@ -29,7 +29,7 @@
 import { FieldValue, Firestore } from 'firebase-admin/firestore';
 import { ProcessingSummary } from '../core/types';
 import { getEconomyConfig } from '../core/config';
-import { coinToAsset, toInt } from '../core/precision';
+import { coinToAsset, coinsToLitoshi, floorDiv, toInt } from '../core/precision';
 import { writeAudit, auditEventId } from '../core/audit';
 import { counterKey, utcDayKey } from '../core/ratelimit';
 import {
@@ -60,6 +60,15 @@ export interface PayoutAssetConfig {
   providerMinAssetUnits: bigint;
   /** Taxa do PROVEDOR em menores unidades do ativo. */
   providerFeeAssetUnits: bigint;
+  // ---- v3: saque por E-MAIL FaucetPay com conversão FIXA ----------------
+  /** 'fixed' (atual); futuro 'usd_auto' é DOCUMENTAL (sem feed). */
+  rateSource?: string;
+  /** 1 COIN = N litoshi (100 ⇒ 1 COIN = 0,000001 LTC). */
+  litoshiPerCoin: bigint;
+  /** Mínimo REAL do envio interno em litoshi (null até o probe confirmar). */
+  providerMinLitoshi: bigint | null;
+  /** Rótulo de exibição (ex.: '1 COIN = 0,000001 LTC'). Nunca autoridade. */
+  displayRate?: string;
 }
 
 /** Resultado da conversão explícita COIN→ativo (pura, determinística). */
@@ -143,6 +152,13 @@ export async function getPayoutsConfig(db: Firestore): Promise<PayoutsConfig> {
       assetUnitPerCoinScaled: toInt((a.assetUnitPerCoinScaled ?? 0) as number | string),
       providerMinAssetUnits: toInt((a.providerMinAssetUnits ?? 0) as number | string),
       providerFeeAssetUnits: toInt((a.providerFeeAssetUnits ?? 0) as number | string),
+      rateSource: typeof a.rateSource === 'string' ? String(a.rateSource) : undefined,
+      litoshiPerCoin: toInt((a.litoshiPerCoin ?? 0) as number | string),
+      providerMinLitoshi:
+        a.providerMinLitoshi === null || a.providerMinLitoshi === undefined
+          ? null
+          : toInt(a.providerMinLitoshi as number | string),
+      displayRate: typeof a.displayRate === 'string' ? String(a.displayRate) : undefined,
     }));
   return {
     assets,
@@ -199,6 +215,32 @@ export function isValidAddressForNetwork(
 }
 
 // ---------------------------------------------------------------------------
+// Destino v3: E-MAIL da conta FaucetPay (transferência INTERNA)
+// ---------------------------------------------------------------------------
+
+/** Regex de e-mail (formato básico simplificado) — destino v3. */
+export const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
+/** Validação LOCAL do runner (o cliente também valida; aqui é autoridade). */
+export function isValidDestinationEmail(email: string): boolean {
+  return email.length >= 6 && email.length <= 254 && EMAIL_REGEX.test(email);
+}
+
+/**
+ * Máscara segura de e-mail p/ UI/logs/auditoria: 2 primeiros caracteres do
+ * local + '***@' + domínio (ex.: 'jo***@example.com'). Local curto mantém
+ * apenas o 1º caractere. O e-mail COMPLETO nunca aparece em logs.
+ */
+export function maskEmail(email: string): string {
+  const at = email.indexOf('@');
+  if (at <= 0) return '*'.repeat(Math.min(email.length, 8));
+  const local = email.slice(0, at);
+  const domain = email.slice(at + 1);
+  const prefix = local.slice(0, Math.min(2, local.length));
+  return `${prefix}***@${domain}`;
+}
+
+// ---------------------------------------------------------------------------
 // Validação PURA (unit-testável sem Firestore)
 // ---------------------------------------------------------------------------
 
@@ -230,7 +272,61 @@ export interface WithdrawalValidationInput {
   finishedGames: number;
   requireFinishedGames: number;
   userStatus: string;
-  addressValid: boolean;
+  /** Destino válido: e-mail FaucetPay (v3) OU endereço por rede (legado). */
+  destinationValid: boolean;
+  /** Presente no fluxo v3 — diferencia o código de falha (INVALID_EMAIL). */
+  destinationEmail?: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// Conversão v3 INTEIRA COIN→litoshi (1 COIN = litoshiPerCoin litoshi)
+// ---------------------------------------------------------------------------
+
+/** Resultado da conversão v3 (pura, determinística, 100% BigInt). */
+export interface EmailConversion {
+  /** Coins inteiras solicitadas (floor de amountUnits / 1e6). */
+  amountCoins: bigint;
+  /** Taxa da PLATAFORMA em coins inteiras (feeUnits / 1e6). */
+  feeCoins: bigint;
+  /** litoshi = (amountCoins − feeCoins) × litoshiPerCoin. */
+  receivedLitoshi: bigint;
+}
+
+/**
+ * ÚNICO ponto de conversão v3 COIN→litoshi. Entrada em units de coin;
+ * converte para COINS INTEIRAS (floor) e aplica a taxa fixa por coin.
+ * Nunca fração de coin — resíduo permanece no backend. Aritmética BigInt.
+ */
+export function convertCoinsToLitoshi(
+  amountUnits: bigint,
+  cfg: PayoutAssetConfig,
+): EmailConversion | null {
+  if (!cfg.litoshiPerCoin || cfg.litoshiPerCoin <= 0n) return null;
+  const amountCoins = floorDiv(amountUnits, BigInt(COIN_PRECISION_UNITS));
+  const feeCoins = floorDiv(cfg.feeUnits, BigInt(COIN_PRECISION_UNITS));
+  const netCoins = amountCoins - feeCoins;
+  return {
+    amountCoins,
+    feeCoins,
+    receivedLitoshi:
+      netCoins > 0n ? coinsToLitoshi(netCoins, cfg.litoshiPerCoin) : 0n,
+  };
+}
+
+/**
+ * Validação v3 contra o mínimo REAL do envio interno (providerMinLitoshi).
+ * null = mínimo ainda não confirmado pelo probe ⇒ passa (o mínimo da
+ * plataforma minWithdrawUnits é a única barreira). Código seguro
+ * BELOW_PROVIDER_MIN (NÃO conta p/ lock 'review').
+ */
+export function validateProviderLitoshiMinimum(
+  conversion: EmailConversion,
+  cfg: PayoutAssetConfig,
+): WithdrawalValidation {
+  if (cfg.providerMinLitoshi !== null && conversion.receivedLitoshi < cfg.providerMinLitoshi) {
+    return { ok: false, failureCode: 'BELOW_PROVIDER_MIN' };
+  }
+  return { ok: true };
 }
 
 /**
@@ -276,8 +372,10 @@ export function validateWithdrawal(
   if (input.userStatus === 'review') {
     return { ok: false, failureCode: 'ACCOUNT_IN_REVIEW' };
   }
-  // (h) formato de endereço por rede
-  if (!input.addressValid) return { ok: false, failureCode: 'INVALID_ADDRESS' };
+  // (h) destino válido: e-mail FaucetPay (v3) ou endereço por rede (legado)
+  if (!input.destinationValid) {
+    return { ok: false, failureCode: input.destinationEmail ? 'INVALID_EMAIL' : 'INVALID_ADDRESS' };
+  }
   return { ok: true };
 }
 
@@ -289,10 +387,15 @@ interface WithdrawalIntent {
   id: string;
   uid: string;
   asset: string;
+  /** 'faucetpay_email' (v3) ou rede legado (Bitcoin/Litecoin/…). */
   network: string;
   amountUnits: bigint;
-  address: string;
-  addressMasked: string;
+  /** Fluxo v3: e-mail FaucetPay do destinatário (SÓ em memória). */
+  destinationEmail: string | null;
+  /** Sempre preenchido (máscara) — é o que vai para logs/auditoria/UI. */
+  destinationMasked: string;
+  /** Fluxo LEGADO apenas (null no fluxo v3; SÓ em memória). */
+  address: string | null;
   clientRequestId: string;
 }
 
@@ -305,19 +408,26 @@ function parseIntent(id: string, data: FirebaseFirestore.DocumentData): Withdraw
   const asset = String(data.asset ?? '');
   const network = String(data.network ?? '');
   const amountUnits = toInt((data.amountUnits ?? -1) as number | string);
-  const address = String(data.address ?? '');
   const clientRequestId = String(data.clientRequestId ?? '');
-  if (!uid || !asset || !network || amountUnits <= 0n || !address || !clientRequestId) {
-    return null;
-  }
+  // Fluxo v3: destinationEmail presente ⇒ e-mail é o destino (transferência
+  // INTERNA FaucetPay). Fluxo legado: address ⇒ endereço externo (compat).
+  const rawEmail = typeof data.destinationEmail === 'string' ? data.destinationEmail.trim() : '';
+  const rawAddress =
+    data.address != null && typeof data.address === 'string' ? data.address.trim() : '';
+  if (!uid || !asset || !network || amountUnits <= 0n || !clientRequestId) return null;
+  if (!rawEmail && !rawAddress) return null; // nenhum destino válido
+  const destinationMasked = rawEmail
+    ? String(data.destinationMasked ?? maskEmail(rawEmail))
+    : String(data.addressMasked ?? maskAddress(rawAddress));
   return {
     id,
     uid,
     asset,
     network,
     amountUnits,
-    address,
-    addressMasked: String(data.addressMasked ?? maskAddress(address)),
+    destinationEmail: rawEmail || null,
+    destinationMasked,
+    address: rawAddress || null,
     clientRequestId,
   };
 }
@@ -501,15 +611,21 @@ async function reserveWithdrawal(
       amountUnits: intent.amountUnits.toString(),
       feeUnits: feeUnits.toString(),
       receivedUnits: (intent.amountUnits - feeUnits).toString(),
-      // Conversão explícita COIN→ativo (v2): bruto e recebido no ativo.
+      // Conversão explícita COIN→ativo (v2/v3): bruto e recebido no ativo.
       ...(conversion
         ? {
             grossAssetUnits: conversion.grossAssetUnits.toString(),
             receivedAssetUnits: conversion.receivedAssetUnits.toString(),
           }
         : {}),
-      address: intent.address, // SOMENTE leitura owner (rules); nunca em logs
-      addressMasked: intent.addressMasked,
+      // Destino: e-mail FaucetPay (v3) OU endereço legado. SOMENTE leitura
+      // owner (rules); NUNCA vai para logs — apenas a máscara.
+      ...(intent.destinationEmail
+        ? {
+            destinationEmail: intent.destinationEmail,
+            destinationMasked: intent.destinationMasked,
+          }
+        : { address: intent.address ?? '', addressMasked: intent.destinationMasked }),
       status: 'processing',
       clientRequestId: intent.clientRequestId,
       createdAt: FieldValue.serverTimestamp(),
@@ -541,7 +657,11 @@ async function reserveWithdrawal(
     origin: 'runner.processWithdrawals',
     ruleVersion,
     status: 'SUCCESS',
-    detail: { asset: intent.asset, network: intent.network, addressMasked: intent.addressMasked },
+    detail: {
+      asset: intent.asset,
+      network: intent.network,
+      destinationMasked: intent.destinationMasked,
+    },
   });
   await writeAudit(db, {
     eventId: auditEventId('WITHDRAWAL_RESERVED', intent.clientRequestId),
@@ -613,7 +733,7 @@ async function completeWithdrawal(
     origin: 'runner.processWithdrawals',
     ruleVersion,
     status: 'SUCCESS',
-    detail: { providerReference, payoutSimulated, addressMasked: intent.addressMasked },
+    detail: { providerReference, payoutSimulated, destinationMasked: intent.destinationMasked },
   });
   // Espelho de histórico (mesmo padrão dos demais espelhos).
   await db
@@ -678,7 +798,7 @@ async function reverseWithdrawal(
     origin: 'runner.processWithdrawals',
     ruleVersion,
     status: 'FAILED',
-    detail: { errorCode, addressMasked: intent.addressMasked },
+    detail: { errorCode, destinationMasked: intent.destinationMasked },
   });
   await writeAudit(db, {
     eventId: auditEventId('REWARD_REVERSED', intent.clientRequestId),
@@ -732,7 +852,14 @@ async function handleIntent(
       }
       if (status === 'processing') {
         // Retomada após crash entre reserva e payout: pula direto ao payout.
-        return await runPayout(db, intent, provider, ruleVersion, intentId);
+        // Valor do payout = líquido convertido (v3/v2) quando persistido;
+        // fallback: valor bruto (legado v1).
+        const storedReceived = existing.get('receivedAssetUnits');
+        const payoutAmount =
+          storedReceived != null
+            ? toInt(storedReceived as number | string)
+            : intent.amountUnits;
+        return await runPayout(db, intent, provider, ruleVersion, intentId, payoutAmount);
       }
       // failed anterior com o MESMO clientRequestId ⇒ não refaz.
       await closeIntent(db, intentId, 'failed', { failureCode: 'ALREADY_PROCESSED' });
@@ -761,23 +888,46 @@ async function handleIntent(
       finishedGames,
       requireFinishedGames: payouts.requireFinishedGames,
       userStatus: user.status,
-      addressValid: isValidAddressForNetwork(intent.network, intent.address),
+      destinationValid: intent.destinationEmail
+        ? isValidDestinationEmail(intent.destinationEmail)
+        : isValidAddressForNetwork(intent.network, intent.address ?? ''),
+      destinationEmail: intent.destinationEmail,
     });
     if (!validation.ok) {
       return await failBeforeReserve(db, intent, validation.failureCode, ruleVersion, nowMs);
     }
 
-    // ---- Conversão explícita COIN→ativo (v2) ------------------------------
-    // Helper ÚNICO; valida contra mínimo real + taxa do PROVEDOR ANTES de
-    // reservar (falha aqui = estorno desnecessário — nada foi debitado).
+    // ---- Conversão explícita COIN→ativo (v3 e-mail / v2 legado) -----------
+    // Helpers ÚNICOS; validam contra o mínimo real ANTES de reservar (falha
+    // aqui = estorno desnecessário — nada foi debitado).
     let conversion: CoinToAssetConversion | undefined;
-    if (assetCfg) {
+    let payoutAmountUnits: bigint = intent.amountUnits;
+    if (assetCfg && intent.destinationEmail && assetCfg.litoshiPerCoin > 0n) {
+      // v3: litoshi = (amountCoins − feeCoins) × litoshiPerCoin (BigInt).
+      const emailConv = convertCoinsToLitoshi(intent.amountUnits, assetCfg);
+      if (emailConv) {
+        if (emailConv.receivedLitoshi <= 0n) {
+          return await failBeforeReserve(db, intent, 'BELOW_MINIMUM', ruleVersion, nowMs);
+        }
+        const minCheck = validateProviderLitoshiMinimum(emailConv, assetCfg);
+        if (!minCheck.ok) {
+          return await failBeforeReserve(db, intent, minCheck.failureCode, ruleVersion, nowMs);
+        }
+        conversion = {
+          grossAssetUnits: coinsToLitoshi(emailConv.amountCoins, assetCfg.litoshiPerCoin),
+          receivedAssetUnits: emailConv.receivedLitoshi,
+        };
+        payoutAmountUnits = emailConv.receivedLitoshi; // paga o LÍQUIDO
+      }
+    } else if (assetCfg) {
       const conv = convertCoinToAsset(intent.amountUnits, assetCfg);
       if (conv) {
         const providerCheck = validateProviderMinimum(conv, assetCfg);
         if (!providerCheck.ok) {
           return await failBeforeReserve(db, intent, providerCheck.failureCode, ruleVersion, nowMs);
         }
+        // Legado paga o valor BRUTO em units de coin (comportamento v1/v2
+        // preservado — regressão intacta).
         conversion = conv;
       }
     }
@@ -795,7 +945,7 @@ async function handleIntent(
     }
 
     // ---- PAYOUT -----------------------------------------------------------
-    return await runPayout(db, intent, provider, ruleVersion, intentId);
+    return await runPayout(db, intent, provider, ruleVersion, intentId, payoutAmountUnits);
   } catch (err) {
     console.error(`[processWithdrawals] intent=${intentId} failed: ${sanitize(err)}`);
     return 'failed';
@@ -809,12 +959,15 @@ async function runPayout(
   provider: PayoutProvider,
   ruleVersion: number,
   intentId: string,
+  /** Valor a pagar em menores unidades do ativo (líquido v3/v2). */
+  payoutAmountUnits: bigint,
 ): Promise<'granted' | 'rejected' | 'failed'> {
   const request: PayoutRequest = {
     asset: intent.asset,
     network: intent.network,
-    address: intent.address,
-    amountUnits: intent.amountUnits,
+    address: intent.address ?? '',
+    destinationEmail: intent.destinationEmail ?? undefined,
+    amountUnits: payoutAmountUnits,
   };
   let result;
   try {
