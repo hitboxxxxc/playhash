@@ -284,7 +284,12 @@ service cloud.firestore {
         && request.resource.data.destinationMasked is string
         && request.resource.data.destinationMasked.size() > 0
         && request.resource.data.destinationMasked.size() <= 64
-        && request.resource.data.destinationMasked.contains('***@')
+        // CORREÇÃO 12.10: `contains()` NÃO EXISTE na linguagem das rules
+        // (o emulador reporta "Function not found: [contains]" e a regra
+        // inteira negava TODA criação de intent). Substituído por matches()
+        // com classes de caractere — SEM barras invertidas (compatível com
+        // o parser das rules): '***@' ⇒ [*][*][*]@.
+        && request.resource.data.destinationMasked.matches('.*[*][*][*]@.*')
         && request.resource.data.clientRequestId is string
         && request.resource.data.clientRequestId.size() >= 8
         && request.resource.data.clientRequestId.size() <= 128

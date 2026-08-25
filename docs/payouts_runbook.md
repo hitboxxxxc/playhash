@@ -172,6 +172,20 @@ andamento — acompanhar até zerar pendências antes/depois do rollback.
 - **Ordem recomendada de testes LIVE** (cooldown 24h após SUCESSO):
   (1) caminho de FALHA primeiro (e-mail inexistente na FaucetPay ⇒ failed +
   estorno integral, sem cooldown); (2) depois o saque mínimo de sucesso.
+- **CORREÇÃO 12.10 — causa raiz do PERMISSION_DENIED universal no saque**:
+  a regra de `withdrawalIntents` usava `destinationMasked.contains('***@')`,
+  mas **`contains()` NÃO EXISTE na linguagem das Security Rules**. O Console
+  publica sem reclamar, porém a função indefinida derruba a expressão inteira
+  ⇒ TODA criação de intent era negada (o fingerprint mostrou users/
+  gameSessions/adRewardIntents/claims OK e SOMENTE withdrawalIntents DENIED).
+  Fix: `matches('.*[*][*][*]@.*')` (classes de caractere, sem barras
+  invertidas). Validado no EMULADOR (auth+firestore) com 4 casos:
+  válido ⇒ ALLOW; e-mail inválido / máscara sem `***@` / uid alheio ⇒ DENY
+  (`backend/scripts/rules_e2e_check.cjs`; rodar com JAVA_HOME do Android
+  Studio: `npx firebase emulators:exec --only auth,firestore --project
+  playhash-70742 "node backend/scripts/rules_e2e_check.cjs"`).
+  **Lição**: SEMPRE validar rules no emulador antes de publicar — o Console
+  não detecta função inexistente.
 
 ## 8. Responsáveis e incidentes
 
