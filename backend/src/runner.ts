@@ -173,8 +173,15 @@ export async function runPayoutProbe(
     return { executed: true, keyValid: balances.errorCode !== 'INVALID_CREDENTIALS' };
   }
   console.log('[runner] payoutProbe key=VALID');
+  const maskUnits = (u: bigint): string => {
+    const s = u.toString();
+    return s.length <= 2
+      ? '*'.repeat(s.length)
+      : `${s[0]}*${'*'.repeat(Math.max(s.length - 2, 1))}${s[s.length - 1]}`;
+  };
   for (const b of balances.data) {
-    console.log(`[runner] payoutProbe balance asset=${b.asset} units=${b.balanceUnits}`);
+    // Saldo SEMPRE mascarado no log (primeiro/último dígito apenas).
+    console.log(`[runner] payoutProbe balance asset=${b.asset} unitsMasked=${maskUnits(b.balanceUnits)}`);
   }
 
   const fees = await provider.getFees();

@@ -319,7 +319,9 @@ describe('payoutProbe (read-only; NUNCA envia payout)', () => {
     const balanceLine = logSpy.mock.calls
       .map((c) => String(c[0]))
       .find((l) => l.includes('payoutProbe balance asset=BTC'));
-    expect(balanceLine).toContain('units=10000');
+    // Saldo SEMPRE mascarado (primeiro/último dígito; '10000' ⇒ '1****0').
+    expect(balanceLine).toContain('unitsMasked=1****0');
+    expect(balanceLine).not.toContain('units=10000');
     logSpy.mockRestore();
   });
 
