@@ -30,7 +30,9 @@ import { FieldValue, Firestore } from 'firebase-admin/firestore';
 import { ProcessingSummary } from '../core/types';
 import { getEconomyConfig } from '../core/config';
 import {
+  applyProbeMinimum,
   buildPayoutsV4Doc,
+  FALLBACK_PROVIDER_MIN_LITOSHI,
   normalizePayoutsDoc,
 } from '../core/payoutsUpgrade';
 import { coinToAsset, coinsToLitoshi, floorDiv, toInt } from '../core/precision';
@@ -249,6 +251,76 @@ export function validateProviderMinForMode(
     return { ok: false, failureCode: 'BELOW_MIN' };
   }
   return { ok: true };
+}
+
+/**
+ * Candidato ao mínimo REAL do provedor (PURO, unit-testável — 12.12):
+ * usa o mínimo exposto pela API quando > 0; caso contrário o fallback
+ * conservador documentado (FALLBACK_PROVIDER_MIN_LITOSHI = líquido exato do
+ * saque mínimo da plataforma). Nunca retorna valor inválido.
+ */
+export function resolveProviderMinCandidate(
+  apiMinLitoshi?: number,
+): { candidate: number; source: 'api' | 'fallback_plataforma' } {
+  const apiMin =
+    typeof apiMinLitoshi === 'number'
+      && Number.isFinite(apiMinLitoshi)
+      && apiMinLitoshi > 0
+      ? Math.trunc(apiMinLitoshi)
+      : undefined;
+  return apiMin !== undefined
+    ? { candidate: apiMin, source: 'api' }
+    : { candidate: FALLBACK_PROVIDER_MIN_LITOSHI, source: 'fallback_plataforma' };
+}
+
+/**
+ * Runner AUTOSSUFICIENTE (12.12): em LIVE com providerMinLitoshi == null,
+ * busca o mínimo/taxa do provider AGORA (endpoint /fees), PERSISTE em
+ * config/payouts v4 via MERGE SEGURO (applyProbeMinimum — nunca ABAIXA um
+ * mínimo já confirmado) e atualiza a config EM MEMÓRIA ANTES da validação
+ * BELOW_MIN. NUNCA recusa saque válido por "mínimo desconhecido":
+ *  - API indisponível/sem mínimo exposto ⇒ fallback conservador documentado;
+ *  - falha ao persistir ⇒ segue com o valor em memória (próxima run grava).
+ */
+export async function ensureProviderMinLitoshi(
+  db: Firestore,
+  cfg: PayoutAssetConfig,
+): Promise<void> {
+  let apiMin: number | undefined;
+  try {
+    const provider = new FaucetPayProvider();
+    const fees = await provider.getFees();
+    if (fees.ok) {
+      const fee = fees.data.find(
+        (f) => String(f.asset ?? '').trim().toUpperCase() === cfg.id,
+      );
+      if (fee?.minUnits !== undefined) apiMin = Number(fee.minUnits);
+    } else {
+      console.log(
+        `[processWithdrawals] providerMin fees UNAVAILABLE=${fees.errorCode} (usando fallback conservador)`,
+      );
+    }
+  } catch (err) {
+    console.log(
+      `[processWithdrawals] providerMin fees UNAVAILABLE=${sanitize(err)} (usando fallback conservador)`,
+    );
+  }
+
+  const { candidate, source } = resolveProviderMinCandidate(apiMin);
+  try {
+    const ref = db.doc('config/payouts');
+    const snap = await ref.get();
+    await ref.set(applyProbeMinimum(snap.data() ?? null, candidate), { merge: true });
+    console.log(
+      `[processWithdrawals] providerMin AUTOSUFICIENTE asset=${cfg.id}` +
+        ` providerMinLitoshi=${candidate} source=${source} (persistido em config/payouts v4)`,
+    );
+  } catch (err) {
+    console.error(
+      `[processWithdrawals] providerMin PERSIST FAILED=${sanitize(err)} (seguindo com valor em memória)`,
+    );
+  }
+  cfg.providerMinLitoshi = BigInt(candidate);
 }
 
 // ---------------------------------------------------------------------------
@@ -983,8 +1055,13 @@ async function handleIntent(
         if (emailConv.receivedLitoshi <= 0n) {
           return await failBeforeReserve(db, intent, 'BELOW_MIN', ruleVersion, nowMs);
         }
-        // CORREÇÃO 12.8: em LIVE exige mínimo REAL confirmado pelo probe
-        // (providerMinLitoshi); em TEST null ⇒ default seguro documentado.
+        // CORREÇÃO 12.12 (RUNNER AUTOSSUFICIENTE): em LIVE com mínimo ainda
+        // desconhecido, busca no provider e PERSISTE em config/payouts v4
+        // ANTES de validar — nunca recusa saque válido por "mínimo
+        // desconhecido". Em TEST null ⇒ default seguro documentado.
+        if (payoutMode === 'live' && assetCfg.providerMinLitoshi === null) {
+          await ensureProviderMinLitoshi(db, assetCfg);
+        }
         const modeCheck = validateProviderMinForMode(payoutMode, assetCfg);
         if (!modeCheck.ok) {
           return await failBeforeReserve(db, intent, modeCheck.failureCode, ruleVersion, nowMs);

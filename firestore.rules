@@ -65,10 +65,15 @@ service cloud.firestore {
     // rateLimits criado por OUTRO contador (sessions/claims) recebia
     // PERMISSION_DENIED em TODA criação de intent (gate falso "bloqueado pela
     // configuração do servidor"). Checar `in` ANTES de comparar.
+    // CORREÇÃO 12.12 (NULL-SAFE total): valor PRESENTE mas NÃO-numérico
+    // (contador corrompido por outro writer) NÃO pode lançar erro na
+    // comparação `<` ⇒ tratar como permitido (fail-open), igual aos casos
+    // doc/chave ausentes. A porta de cota NUNCA nega a PRIMEIRA solicitação.
     function dailyQuotaOk(uid, prefix, limit) {
       let k = prefix + '_' + dayKey();
       return !exists(/databases/$(database)/documents/rateLimits/$(uid))
         || !(k in get(/databases/$(database)/documents/rateLimits/$(uid)).data)
+        || !(get(/databases/$(database)/documents/rateLimits/$(uid)).data[k] is number)
         || get(/databases/$(database)/documents/rateLimits/$(uid)).data[k] < limit;
     }
 

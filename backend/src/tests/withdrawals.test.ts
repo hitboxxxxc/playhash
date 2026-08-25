@@ -16,6 +16,7 @@ import {
   maskEmail,
   normalizeAssetId,
   resolvePayoutMode,
+  resolveProviderMinCandidate,
   validateProviderLitoshiMinimum,
   validateProviderMinForMode,
   validateProviderMinimum,
@@ -398,6 +399,52 @@ describe('CORREÇÃO 12.8: normalização de ids + gate de modo + fluxo LTC v3',
     // Com mínimo real confirmado, live valida normalmente:
     const cfg: PayoutAssetConfig = { ...LTC_V3, providerMinLitoshi: 1000n };
     expect(validateProviderMinForMode('live', cfg)).toEqual({ ok: true });
+  });
+
+  // ---- 12.12: RUNNER AUTOSSUFICIENTE (resolveProviderMinCandidate) -------
+  it('12.12: API expõe mínimo > 0 ⇒ usa-o (source=api)', () => {
+    expect(resolveProviderMinCandidate(2500)).toEqual({
+      candidate: 2500,
+      source: 'api',
+    });
+  });
+
+  it('12.12: API sem mínimo/inválido ⇒ fallback conservador documentado', () => {
+    expect(resolveProviderMinCandidate(undefined)).toEqual({
+      candidate: 1800,
+      source: 'fallback_plataforma',
+    });
+    expect(resolveProviderMinCandidate(0)).toEqual({
+      candidate: 1800,
+      source: 'fallback_plataforma',
+    });
+    expect(resolveProviderMinCandidate(-5)).toEqual({
+      candidate: 1800,
+      source: 'fallback_plataforma',
+    });
+    expect(resolveProviderMinCandidate(Number.NaN)).toEqual({
+      candidate: 1800,
+      source: 'fallback_plataforma',
+    });
+  });
+
+  it('12.12: após ensure (simulado), LIVE com mínimo preenchido NUNCA recusa por desconhecido; BELOW_MIN só quando realmente abaixo', () => {
+    // Simula o efeito de ensureProviderMinLitoshi: preenche o mínimo na cfg
+    // em memória antes da validação do modo.
+    const cfg: PayoutAssetConfig = { ...LTC_V3 };
+    const { candidate } = resolveProviderMinCandidate(undefined);
+    cfg.providerMinLitoshi = BigInt(candidate);
+    // Gate do modo passa (mínimo conhecido):
+    expect(validateProviderMinForMode('live', cfg)).toEqual({ ok: true });
+    // Saque mínimo da plataforma: líquido 1800 ≥ providerMin 1800 ⇒ passa:
+    const conv = convertCoinsToLitoshi(20_000_000n, cfg)!;
+    expect(validateProviderLitoshiMinimum(conv, cfg)).toEqual({ ok: true });
+    // Provider mínimo real MAIOR que o líquido ⇒ BELOW_MIN real:
+    const cfgHigh: PayoutAssetConfig = { ...cfg, providerMinLitoshi: 5000n };
+    expect(validateProviderLitoshiMinimum(conv, cfgHigh)).toEqual({
+      ok: false,
+      failureCode: 'BELOW_MIN',
+    });
   });
 
   it('fluxo ponta-a-ponta (réplica): saque LTC válido, test mode ⇒ SIM completed', async () => {
