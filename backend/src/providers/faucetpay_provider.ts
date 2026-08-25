@@ -11,6 +11,7 @@
  *    checar o resultado anterior).
  *  - Endereço completo e API key JAMAIS aparecem em logs (só códigos seguros).
  */
+import { createHash } from 'crypto';
 import {
   PayoutProvider,
   PayoutRequest,
@@ -46,6 +47,11 @@ function mapApiError(apiCode: string): string {
     default:
       return 'PROVIDER_ERROR';
   }
+}
+
+/** SHA-256 prefixo da mensagem bruta — diagnóstico sem expor conteúdo. */
+function detailHash(raw: string): string {
+  return createHash('sha256').update(raw).digest('hex').slice(0, 10);
 }
 
 export class FaucetPayProvider implements PayoutProvider, ReadonlyPayoutProvider {
@@ -143,7 +149,8 @@ export class FaucetPayProvider implements PayoutProvider, ReadonlyPayoutProvider
       if (!res.ok) return { ok: false, errorCode: `PROVIDER_HTTP_${res.status}` };
       if (!body) return { ok: false, errorCode: 'PROVIDER_BAD_JSON' };
       if (body.success !== true) {
-        return { ok: false, errorCode: mapApiError(String(body['message'] ?? '')) };
+        const raw = String(body['message'] ?? '');
+        return { ok: false, errorCode: mapApiError(raw), detailHash: detailHash(raw) };
       }
       return { ok: true, data: body };
     } catch (err) {
@@ -180,7 +187,8 @@ export class FaucetPayProvider implements PayoutProvider, ReadonlyPayoutProvider
         if (!res.ok) return { ok: false, errorCode: `PROVIDER_HTTP_${res.status}` };
         if (!body) return { ok: false, errorCode: 'PROVIDER_BAD_JSON' };
         if (body.success !== true) {
-          return { ok: false, errorCode: mapApiError(String(body['message'] ?? '')) };
+          const raw = String(body['message'] ?? '');
+          return { ok: false, errorCode: mapApiError(raw), detailHash: detailHash(raw) };
         }
       } catch (err) {
         const aborted = err instanceof Error && err.name === 'AbortError';

@@ -61,7 +61,16 @@ export interface ProviderFeeEntry {
 
 export type ProviderReadResult<T> =
   | { ok: true; data: T }
-  | { ok: false; errorCode: string };
+  | {
+      ok: false;
+      /** Código seguro (sem dados sensíveis). */
+      errorCode: string;
+      /**
+       * Diagnóstico operacional: SHA-256 (prefixo) da mensagem BRUTA do
+       * provedor — permite identificar a causa SEM expor o conteúdo.
+       */
+      detailHash?: string;
+    };
 
 /**
  * Contrato READ-ONLY opcional (probe): valida a chave e lê saldos/taxas
