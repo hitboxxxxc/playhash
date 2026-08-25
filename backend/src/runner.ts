@@ -624,7 +624,9 @@ export async function runLivePayoutDirect(
     };
   }
   console.error(
-    `[runner] livePayoutDirect failed code=${result.errorCode ?? 'PROVIDER_ERROR'} (nenhum dado sensível no log)`,
+    `[runner] livePayoutDirect failed code=${result.errorCode ?? 'PROVIDER_ERROR'}` +
+      (result.detailMsg ? ` msg="${result.detailMsg}"` : '') +
+      ' (nenhum dado sensível no log)',
   );
   return { executed: true, status: 'failed', providerMinLitoshi: candidate };
 }

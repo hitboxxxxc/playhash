@@ -41,6 +41,11 @@ export interface PayoutResult {
   providerReference?: string;
   /** Código seguro de falha (sem dados sensíveis). */
   errorCode?: string;
+  /**
+   * Mensagem operacional SANITIZADA do provedor (tokens redigidos, truncada)
+   * p/ diagnóstico — nunca contém credenciais nem destino completo.
+   */
+  detailMsg?: string;
   /** true quando o pagamento foi SIMULADO (TestProvider) — auditoria. */
   payoutSimulated?: boolean;
 }

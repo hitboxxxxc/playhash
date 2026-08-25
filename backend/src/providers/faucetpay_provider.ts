@@ -197,6 +197,8 @@ export class FaucetPayProvider implements PayoutProvider, ReadonlyPayoutProvider
         return {
           status: 'failed',
           errorCode: mapError(String(body?.message ?? '')),
+          // Diagnóstico sanitizado (tokens longos redigidos; sem dados sensíveis).
+          detailMsg: sanitizeDetail(String(body?.message ?? '')),
         };
       } catch (err) {
         const aborted = err instanceof Error && err.name === 'AbortError';
