@@ -193,8 +193,10 @@ export async function getPayoutsConfig(db: Firestore): Promise<PayoutsConfig> {
   const snap = await ref.get();
   const data = (snap.data() ?? null) as Record<string, unknown> | null;
   const normalized = normalizePayoutsDoc(data);
+  // Heal SOMENTE quando legado de verdade: doc ausente, version<4 ou assets
+  // em ARRAY (v1–v3). Doc v4 canônico (assets como MAPA) ⇒ no-op.
   const needsHeal =
-    !snap.exists || normalized.version < 4 || !Array.isArray(data?.assets);
+    !snap.exists || normalized.version < 4 || Array.isArray(data?.assets);
   if (needsHeal) {
     await ref.set(buildPayoutsV4Doc(data), { merge: true });
     console.log(
