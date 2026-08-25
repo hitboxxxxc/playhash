@@ -48,6 +48,23 @@ export const INDEX_SPECS: readonly IndexSpec[] = [
       { fieldPath: 'createdAt', order: 'ASCENDING' },
     ],
   },
+  {
+    // Anúncios (doc 04/05 §31): fila de intents pendentes.
+    collectionGroup: 'adRewardIntents',
+    fields: [
+      { fieldPath: 'status', order: 'ASCENDING' },
+      { fieldPath: 'createdAt', order: 'ASCENDING' },
+    ],
+  },
+  {
+    // Anúncios: cooldown = última concessão do dia (uid+periodKey).
+    collectionGroup: 'adRewards',
+    fields: [
+      { fieldPath: 'uid', order: 'ASCENDING' },
+      { fieldPath: 'periodKey', order: 'ASCENDING' },
+      { fieldPath: 'processedAt', order: 'DESCENDING' },
+    ],
+  },
 ] as const;
 
 const CREATE_TIMEOUT_MS = 180_000;
