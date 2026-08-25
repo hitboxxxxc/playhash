@@ -32,6 +32,12 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+        <!-- AdMob APPLICATION_ID (obrigatório pelo SDK google_mobile_ads).
+             IDs de UNITS (rewarded) ficam no Dart (ads_config.dart) com
+             kDebugMode => unidades de TESTE do Google (proteção da conta). -->
+        <meta-data
+            android:name="com.google.android.gms.ads.APPLICATION_ID"
+            android:value="ca-app-pub-9000000707740805~6197161075"/>
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and

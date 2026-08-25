@@ -13,6 +13,7 @@ import { FieldValue, Firestore } from 'firebase-admin/firestore';
 import { initAdmin } from './admin';
 import { processGameSessions } from './processors/processGameSessions';
 import { processPurchaseIntents } from './processors/processPurchaseIntents';
+import { processAdRewards } from './processors/processAdRewards';
 import { processClaims } from './processors/processClaims';
 import { closeBlocks } from './processors/closeBlocks';
 import { leagueSweep } from './processors/league_sweep';
@@ -145,6 +146,9 @@ async function main(): Promise<void> {
   const processors: Processor[] = [
     { name: 'gameSessions', run: processGameSessions },
     { name: 'purchaseIntents', run: processPurchaseIntents },
+    // Recompensas por anúncio ANTES de claims/seasonProgress: o xpBonus do
+    // adReward entra no seasonProgress antes do fechamento de blocos.
+    { name: 'adRewards', run: processAdRewards },
     { name: 'claims', run: processClaims },
     { name: 'seasonProgress', run: processSeasonProgress },
     { name: 'closeBlocks', run: closeBlocks },

@@ -11,6 +11,7 @@ import '../../data/models/wallet_model.dart';
 import 'widgets/category_tabs.dart';
 import 'widgets/machine_card.dart';
 import 'widgets/machine_detail_sheet.dart';
+import 'widgets/rewarded_ad_card.dart';
 import 'widgets/store_header.dart';
 
 enum _StoreStatus { loading, ready, error }
@@ -186,27 +187,44 @@ class _StoreScreenState extends ConsumerState<StoreScreen>
           color: AppColors.cyan,
           backgroundColor: AppColors.surface,
           onRefresh: _load,
-          child: GridView.builder(
-            physics: const AlwaysScrollableScrollPhysics(),
-            padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 2,
-              mainAxisSpacing: 12,
-              crossAxisSpacing: 12,
-              childAspectRatio: 0.62,
-            ),
-            itemCount: _catalog.length,
-            itemBuilder: (BuildContext context, int index) {
-              final MachineCatalogModel machine = _catalog[index];
-              final BigInt? balance = _wallet?.availableBalance;
-              return MachineCard(
-                machine: machine,
-                ownedCount: _ownedByMachine[machine.id] ?? 0,
-                canAfford: balance != null && balance >= machine.priceUnits,
-                onBuy: () => _openDetails(machine),
-                onOpenDetails: () => _openDetails(machine),
-              );
-            },
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              // Card "ASSISTA E GANHE 1 COIN" no TOPO da LOJA (doc 04).
+              // Recompensa validada 100% no backend; falha do anúncio não
+              // afeta o catálogo/compras.
+              if (_uid != null)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+                  child: RewardedAdCard(uid: _uid!),
+                ),
+              Expanded(
+                child: GridView.builder(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+                  gridDelegate:
+                      const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 2,
+                    mainAxisSpacing: 12,
+                    crossAxisSpacing: 12,
+                    childAspectRatio: 0.62,
+                  ),
+                  itemCount: _catalog.length,
+                  itemBuilder: (BuildContext context, int index) {
+                    final MachineCatalogModel machine = _catalog[index];
+                    final BigInt? balance = _wallet?.availableBalance;
+                    return MachineCard(
+                      machine: machine,
+                      ownedCount: _ownedByMachine[machine.id] ?? 0,
+                      canAfford:
+                          balance != null && balance >= machine.priceUnits,
+                      onBuy: () => _openDetails(machine),
+                      onOpenDetails: () => _openDetails(machine),
+                    );
+                  },
+                ),
+              ),
+            ],
           ),
         ),
     };

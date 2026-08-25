@@ -33,6 +33,17 @@ abstract final class Collections {
   // são 100% do runner — doc 05 §26/§51).
   static const String withdrawalIntents = 'withdrawalIntents';
 
+  // Intenções de recompensa por ANÚNCIO (cliente SÓ registra a intenção
+  // após onUserEarnedReward; a concessão é EXCLUSIVAMENTE do runner).
+  static const String adRewardIntents = 'adRewardIntents';
+
+  // Recompensas de anúncio CONCEDIDAS pelo runner (leitura do dono — usado
+  // pelo contador diário "X de Y hoje" da LOJA).
+  static const String adRewards = 'adRewards';
+
+  // Config pública de anúncios (config/ads): dailyLimit/cooldown/reward.
+  static const String configAds = 'config/ads';
+
   // Config pública de saques (config/payouts): ativos habilitados, mínimos
   // e taxas — somente leitura ("valores definidos pelo servidor").
   static const String configPayouts = 'config/payouts';

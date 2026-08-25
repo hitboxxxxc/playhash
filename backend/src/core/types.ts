@@ -151,6 +151,9 @@ export type AuditEventType =
   | 'LEAGUE_REWARD_GRANTED'
   | 'SEASON_XP_GRANTED'
   | 'SEASON_REWARD_GRANTED'
+  // Anúncios (doc 04/05 §31) — recompensa validada SOMENTE no backend.
+  | 'AD_REWARD_GRANTED'
+  | 'AD_REWARD_REJECTED'
   // Saques (doc 05 §26/§51) — intents processados pelo runner.
   | 'WITHDRAWAL_REQUESTED'
   | 'WITHDRAWAL_RESERVED'

@@ -329,6 +329,21 @@ const SEASON_MISSIONS: Record<string, Record<string, unknown>> = {
 };
 
 /**
+ * Config de ANÚNCIOS v1 — config/ads (create-if-absent; autoridade do
+ * runner processAdRewards). 1 COIN = 1e6 units por vídeo rewarded;
+ * dailyLimit/cooldown aplicados SOMENTE no backend (doc 04/05 §31).
+ */
+const ADS_V1: Record<string, unknown> = {
+  rewarded: {
+    dailyLimit: 10,
+    cooldownMinutes: 5,
+    reward: { type: 'coins', amountUnits: 1_000_000 }, // 1 COIN
+    xpBonus: 25,
+  },
+  version: 1,
+};
+
+/**
  * Catálogo de CONQUISTAS v1 — achievements/{id} (create-if-absent).
  * category: games | mining | collection | missions. Sem período (sem reset).
  */
@@ -590,6 +605,7 @@ async function main(): Promise<void> {
     console.log(`[seed] leagues/${id}: ${await createIfMissing(db, `leagues/${id}`, data)}`);
   }
   console.log(`[seed] config/payouts (v1): ${await createIfMissing(db, 'config/payouts', PAYOUTS_V1)}`);
+  console.log(`[seed] config/ads (v1): ${await createIfMissing(db, 'config/ads', ADS_V1)}`);
   console.log(`[seed] seasons/season-01: ${await createIfMissing(db, 'seasons/season-01', seasonDoc())}`);
   for (const [id, data] of Object.entries(SEASON_MISSIONS)) {
     console.log(`[seed] missions/${id} (season): ${await createIfMissing(db, `missions/${id}`, data)}`);
