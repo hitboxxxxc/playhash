@@ -196,6 +196,9 @@ jobs:
           FAUCETPAY_API_KEY: ${{ secrets.FAUCETPAY_API_KEY }}
           PAYOUT_DIRECT_ASSET: 'LTC'
           PAYOUT_DIRECT_EMAIL: ${{ inputs.payoutEmail }}
+          # Opcional: valor decimal em LTC p/ PROVAR o mínimo real do provedor
+          # (vazio = mínimo conhecido/fallback). Tentativa rejeitada não custa.
+          PAYOUT_DIRECT_AMOUNT: ${{ inputs.payoutAmount }}
         run: node dist/runner.js
 
       # devTopUp: crédito de saldo de desenvolvimento. GATE no runner:

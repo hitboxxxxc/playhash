@@ -492,6 +492,11 @@ export interface LivePayoutDirectOptions {
   asset: string;
   /** E-mail FaucetPay DO DONO (input do workflow; nunca logado). */
   email: string;
+  /**
+   * Valor DECIMAL opcional em LTC (ex.: "0.0001") p/ PROVA do mínimo real.
+   * Vazio ⇒ usa o mínimo conhecido/fallback. Tentativa rejeitada não custa.
+   */
+  amountDecimal?: string;
 }
 
 export async function runLivePayoutDirect(
@@ -550,7 +555,19 @@ export async function runLivePayoutDirect(
   }
   const cfgMinRaw = cfg?.providerMinLitoshi;
   const cfgMin = typeof cfgMinRaw === 'bigint' && cfgMinRaw > 0n ? Number(cfgMinRaw) : null;
-  const minLitoshi = apiMin ?? (cfgMin !== null ? cfgMin : FALLBACK_PROVIDER_MIN_LITOSHI);
+  let minLitoshi = apiMin ?? (cfgMin !== null ? cfgMin : FALLBACK_PROVIDER_MIN_LITOSHI);
+  // PROVA do mínimo real: input decimal explícito sobrepõe (para sondar o
+  // menor valor aceito pelo provedor — tentativa rejeitada não custa nada).
+  const probeRaw = String(opts.amountDecimal ?? '').trim();
+  if (probeRaw) {
+    const probeUnits = decimalToUnits(probeRaw, 8);
+    if (probeUnits === null || probeUnits <= 0n) {
+      console.error('[runner] livePayoutDirect FAILED=INVALID_AMOUNT_INPUT');
+      return { executed: false };
+    }
+    minLitoshi = Number(probeUnits);
+    console.log(`[runner] livePayoutDirect probe amountLitoshi=${minLitoshi} (input explícito)`);
+  }
 
   // ---- 2) UM micro-pagamento real = mínimo do provedor -------------------
   const referenceId = `livedirect-${Date.now()}`;
@@ -589,27 +606,27 @@ export async function runLivePayoutDirect(
     console.error(`[runner] livePayoutDirect AUDIT FAILED=${sanitize(err)}`);
   }
 
-  // ---- 3) Persiste providerMinLitoshi + taxa em config/payouts v4 --------
+  // ---- 3) Resultado seguro (sem crash; sem dados sensíveis) --------------
   const candidate = Math.max(minLitoshi, FALLBACK_PROVIDER_MIN_LITOSHI);
-  try {
-    const ref = db.doc('config/payouts');
-    const snap = await ref.get();
-    const merged = {
-      ...applyProbeMinimum(snap.data() ?? null, candidate),
-      // Taxa observada do envio interno (doc-level; ignorada pelo normalizador).
-      providerFeeLitoshiLastSeen: feeUnits !== undefined ? Number(feeUnits) : null,
-    };
-    await ref.set(merged, { merge: true });
-    console.log(
-      `[runner] livePayoutDirect WRITE OK providerMinLitoshi=${candidate} source=${apiMin !== undefined ? 'api' : 'fallback_plataforma'}` +
-        ` feeUnits=${feeUnits?.toString() ?? '<indisponivel>'} (config/payouts v4)`,
-    );
-  } catch (err) {
-    console.error(`[runner] livePayoutDirect PERSIST FAILED=${sanitize(err)}`);
-  }
-
-  // ---- 4) Resultado seguro (sem crash; sem dados sensíveis) --------------
   if (result.status === 'completed') {
+    // Persiste SOMENTE valores ACEITOS pelo provedor (merge seguro; nunca
+    // abaixo do já confirmado). Falha de envio não grava mínimo.
+    try {
+      const ref = db.doc('config/payouts');
+      const snap = await ref.get();
+      const merged = {
+        ...applyProbeMinimum(snap.data() ?? null, candidate),
+        // Taxa observada do envio interno (doc-level; ignorada pelo normalizador).
+        providerFeeLitoshiLastSeen: feeUnits !== undefined ? Number(feeUnits) : null,
+      };
+      await ref.set(merged, { merge: true });
+      console.log(
+        `[runner] livePayoutDirect WRITE OK providerMinLitoshi=${candidate} source=${apiMin !== undefined ? 'api' : 'confirmado_por_envio'}` +
+          ` feeUnits=${feeUnits?.toString() ?? '<indisponivel>'} (config/payouts v4)`,
+      );
+    } catch (err) {
+      console.error(`[runner] livePayoutDirect PERSIST FAILED=${sanitize(err)}`);
+    }
     const rawRef = String(result.providerReference ?? '');
     const maskedRef =
       rawRef.length <= 4 ? '*'.repeat(rawRef.length) : `${rawRef.slice(0, 3)}***${rawRef.slice(-1)}`;
@@ -803,6 +820,7 @@ async function main(): Promise<void> {
         payoutMode: String(process.env.PAYOUT_MODE ?? 'test'),
         asset: String(process.env.PAYOUT_DIRECT_ASSET ?? 'LTC').trim().toUpperCase(),
         email: String(process.env.PAYOUT_DIRECT_EMAIL ?? '').trim(),
+        amountDecimal: String(process.env.PAYOUT_DIRECT_AMOUNT ?? '').trim(),
       });
       // Falha do provedor NÃO derruba o job (código seguro; auditoria registra).
       process.exitCode = 0;
