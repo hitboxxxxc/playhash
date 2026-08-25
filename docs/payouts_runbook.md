@@ -108,7 +108,33 @@ Efeito imediato na próxima run do cron: saques voltam a ser simulação auditad
 `payoutSimulated=true`). Intents `processing` em aberto podem concluir payout real em
 andamento — acompanhar até zerar pendências antes/depois do rollback.
 
-## 7. Responsáveis e incidentes
+## 7.5 v3 — SAQUE POR E-MAIL FAUCETPAY (atual; 2026-08-25)
+
+- **Destino**: e-mail da conta FaucetPay do usuário (transferência INTERNA).
+  NUNCA endereço externo de carteira. Campos do intent:
+  `{uid, asset, amountUnits, destinationEmail, destinationMasked,
+  clientRequestId, createdAt, clientVersion}`.
+- **Conversão FIXA** (`config/payouts` version 3): `1 COIN = 100 litoshi`
+  (= 0,000001 LTC). Aritmética inteira: `litoshi = (coins − feeCoins) × 100`.
+  Mínimo 20 COIN · taxa 2 COIN ⇒ mínimo líquido 1800 litoshi (0,000018 LTC).
+  LTC é o ÚNICO ativo habilitado (BTC/DOGE/USDT "conversão em definição").
+  `futureRateSource: 'usd_auto'` é DOCUMENTAL (futuro; sem feed implementado).
+- **Confirmação explícita**: sheet `WithdrawConfirmSheet` OBRIGATÓRIA antes de
+  criar o intent (resumo + e-mail mascarado + CANCELAR/CONFIRMAR SAQUE).
+- **providerMinLitoshi**: `null` — a API da FaucetPay não expõe o mínimo do
+  envio interno (`fees UNAVAILABLE=PROVIDER_ERROR` no probe de 2026-08-25;
+  chave VÁLIDA, saldo LTC presente). O mínimo da plataforma (20 COIN) é a
+  barreira ativa; erro tipado `BELOW_MIN` cobre rejeição do provedor.
+- **PENDÊNCIA (ação humana)**: publicar as rules v3
+  (`firebase deploy --only firestore:rules --project playhash-70742` com conta
+  autorizada — conta local e service account receberam 403 IAM). Enquanto não
+  publicadas, intents v3 recebem PERMISSION_DENIED no cliente.
+- **Micro-teste LIVE do dono**: (1) `gh variable set PAYOUT_MODE --body live`;
+  (2) no app, solicitar o saque MÍNIMO digitando o próprio e-mail FaucetPay;
+  (3) aguardar ≤5 min e conferir status + chegada do saldo na FaucetPay;
+  (4) voltar para `test` para pausar pagamentos.
+
+## 8. Responsáveis e incidentes
 
 - **Owner:** dono do repo (único com acesso aos secrets no GitHub).
 - **Troca de chave:** `gh secret set FAUCETPAY_API_KEY` (nome apenas; valor nunca em chat/log).
@@ -117,10 +143,11 @@ andamento — acompanhar até zerar pendências antes/depois do rollback.
 - **Falha de payout de usuário:** código seguro em `withdrawals/{id}.errorCode`;
   estorno automático + auditoria `WITHDRAWAL_FAILED`/`REWARD_REVERSED`.
 
-## 8. Garantias de segurança
+## 9. Garantias de segurança
 
 - A chave da FaucetPay existe SOMENTE como secret do runner; nunca é impressa.
-- Endereço completo nunca vai para logs/auditoria — apenas `addressMasked` (`bc1q…080`).
+- Destino completo (e-mail/endereço) nunca vai para logs/auditoria — apenas a
+  máscara (`ow***@example.com` / `bc1q…080`).
 - Nenhum payout real por padrão: exige `PAYOUT_MODE=live` + ação humana explícita.
 - Idempotência: `clientRequestId` como ID do withdrawal ⇒ crash entre reserva e payout
   retoma SEM duplicar pagamento.
