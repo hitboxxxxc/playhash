@@ -1,3 +1,4 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:playhash/core/services/withdrawal_service.dart';
 import 'package:playhash/data/repositories/payouts_repository.dart';
@@ -7,6 +8,10 @@ class _FakePayoutsRepository implements PayoutsRepositoryApi {
   _FakePayoutsRepository({this.failTimes = 0});
 
   int failTimes;
+
+  /// Erro a lançar no lugar de falha de rede genérica (ex.: FirebaseException
+  /// permission-denied p/ testar o mapeamento).
+  Object? error;
   final List<Map<String, dynamic>> calls = <Map<String, dynamic>>[];
 
   @override
@@ -21,13 +26,17 @@ class _FakePayoutsRepository implements PayoutsRepositoryApi {
   }) async {
     if (failTimes > 0) {
       failTimes -= 1;
-      throw Exception('network unavailable');
+      throw error ??
+          FirebaseException(
+              plugin: 'cloud_firestore', code: 'unavailable');
     }
     calls.add(<String, dynamic>{
       'clientRequestId': clientRequestId,
       'uid': uid,
       'asset': asset,
-      'amountUnits': amountUnits.toString(),
+      // ESPELHA o payload REAL do repositório: amountUnits é INT (rules:
+      // `amountUnits is int` — string ⇒ PERMISSION_DENIED).
+      'amountUnits': amountUnits.toInt(),
       'destinationEmail': destinationEmail,
       'destinationMasked': destinationMasked,
       'clientVersion': clientVersion,
@@ -72,11 +81,60 @@ void main() {
       final Map<String, dynamic> call = repo.calls.single;
       expect(call['uid'], 'uid-1');
       expect(call['asset'], 'LTC');
-      expect(call['amountUnits'], '25000000');
+      // Rules exigem INT — string causava PERMISSION_DENIED ("sem conexão").
+      expect(call['amountUnits'], isA<int>());
+      expect(call['amountUnits'], 25000000);
       expect(call['destinationEmail'], 'owner@example.com');
       expect(call['destinationMasked'], isNot(call['destinationEmail']));
       expect(call['destinationMasked'], contains('***@'));
       expect(call['clientRequestId'], requestId);
+    });
+
+    test('payload do intent == allowlist EXATA das rules v3', () async {
+      final _FakePayoutsRepository repo = _FakePayoutsRepository();
+      final WithdrawalService service = WithdrawalService(repository: repo);
+
+      await service.requestWithdrawal(
+        uid: 'uid-1',
+        asset: 'LTC',
+        amountUnits: BigInt.from(20000000),
+        destinationEmail: 'owner@example.com',
+      );
+
+      // Campos enviados (createdAt vira serverTimestamp no doc real) devem
+      // ser EXATAMENTE a allowlist do hasOnly das rules — nem mais, nem menos.
+      final Set<String> sentKeys =
+          (repo.calls.single.keys.toSet()..add('createdAt'));
+      expect(sentKeys.difference(kWithdrawalIntentAllowedKeys), isEmpty,
+          reason: 'nenhum campo fora da allowlist das rules');
+      expect(kWithdrawalIntentAllowedKeys.difference(sentKeys), isEmpty,
+          reason: 'nenhum campo exigido pelas rules pode faltar');
+    });
+
+    test('PERMISSION_DENIED NUNCA vira "sem conexão" (mensagem específica)',
+        () async {
+      final _FakePayoutsRepository repo = _FakePayoutsRepository(failTimes: 1)
+        ..error = FirebaseException(
+            plugin: 'cloud_firestore', code: 'permission-denied');
+      final WithdrawalService service = WithdrawalService(repository: repo);
+
+      await expectLater(
+        service.requestWithdrawal(
+          uid: 'uid-1',
+          asset: 'LTC',
+          amountUnits: BigInt.from(20000000),
+          destinationEmail: 'owner@example.com',
+        ),
+        throwsA(
+          isA<WithdrawalException>().having(
+            (WithdrawalException e) => e.message,
+            'message',
+            isNot(contains('Sem conexão')),
+          ),
+        ),
+      );
+      // Sem retry em erro definitivo: exatamente 1 tentativa.
+      expect(repo.failTimes, 0);
     });
 
     test('retry offline reusa o MESMO clientRequestId (idempotência)',

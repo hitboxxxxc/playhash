@@ -33,9 +33,14 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
   bool _submitting = false;
   StreamSubscription<WithdrawalResult>? _watchSub;
 
+  /// COINS inteiras digitadas no form (atualizadas a cada dígito) — alimenta
+  /// a conversão EM TEMPO REAL do sheet de confirmação (apresentação).
+  final ValueNotifier<int> _amountCoins = ValueNotifier<int>(0);
+
   @override
   void dispose() {
     _watchSub?.cancel();
+    _amountCoins.dispose();
     super.dispose();
   }
 
@@ -80,26 +85,20 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
   }) async {
     if (!mounted) return;
 
-    // Sheet de confirmação OBRIGATÓRIA antes do intent (v3).
-    final BigInt receiveLitoshi = receivedLitoshi(
-          amountUnits,
-          WithdrawAssetInfo(
-            id: asset.id,
-            network: asset.network,
-            minWithdrawUnits: asset.minWithdrawUnits,
-            feeUnits: asset.feeUnits,
-          ),
-        ) ??
-        BigInt.zero;
+    // Sheet de confirmação OBRIGATÓRIA antes do intent (v3). A conversão é
+    // recalculada EM TEMPO REAL dentro da sheet via notifier (apresentação).
     final bool confirmed = await WithdrawConfirmSheet.show(
       context,
       assetId: asset.id,
       destinationMasked: maskEmail(destinationEmail),
       amountUnits: amountUnits,
       feeUnits: asset.feeUnits,
-      litoshiPerCoin: 100,
-      displayRate: '1 COIN = 0,000001 LTC',
-      receivedLitoshiValue: receiveLitoshi,
+      litoshiPerCoin: asset.litoshiPerCoin,
+      displayRate: asset.displayRate,
+      minWithdrawUnits: asset.minWithdrawUnits,
+      availableBalance: ref.read(walletStreamProvider).value?.availableBalance ??
+          BigInt.zero,
+      amountCoins: _amountCoins,
     );
     if (!confirmed || !mounted) return; // CANCELAR ⇒ NADA é criado
 
@@ -305,6 +304,7 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
         feeUnits: asset.feeUnits,
       ),
       availableBalance: available,
+      amountCoins: _amountCoins,
       submitting: _submitting,
       onSubmit: (BigInt amount, String destinationEmail) => _submit(
         asset: asset,

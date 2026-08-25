@@ -1,5 +1,8 @@
 import 'dart:async';
+import 'dart:developer' as developer;
 import 'dart:math';
+
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../../data/repositories/payouts_repository.dart';
 
@@ -118,6 +121,12 @@ class WithdrawalService {
   /// Cria a intent de saque com retry seguro (MESMO clientRequestId em todas
   /// as tentativas). Destino = E-MAIL da conta FaucetPay (v3, transferência
   /// interna). Retorna o requestId para observação do resultado.
+  ///
+  /// MAPEAMENTO DE ERROS: "sem conexão" SOMENTE para falha REAL de rede
+  /// (`unavailable`/`network-request-failed`/SocketException). Demais erros
+  /// (permission-denied, invalid-argument, …) NUNCA viram "sem conexão" —
+  /// recebem mensagem segura específica; o código técnico vai apenas para o
+  /// log local (dart:developer), sem dados sensíveis.
   Future<String> requestWithdrawal({
     required String uid,
     required String asset,
@@ -148,14 +157,37 @@ class WithdrawalService {
           clientVersion: clientVersion,
         );
         return requestId;
-      } on Exception {
-        // offline/instável ⇒ nova tentativa com MESMO id
+      } on FirebaseException catch (e) {
+        developer.log('withdrawal intent error code=${e.code}',
+            name: 'WithdrawalService');
+        if (_isOfflineCode(e.code)) {
+          // offline/instável ⇒ nova tentativa com MESMO id
+          continue;
+        }
+        if (e.code == 'permission-denied') {
+          throw WithdrawalException(
+            'Saque bloqueado pela configuração do servidor. '
+            'Atualize o app e tente novamente.',
+          );
+        }
+        throw WithdrawalException(
+          'Não foi possível concluir o saque. Tente novamente.',
+        );
+      } on Exception catch (e) {
+        // Erros de rede fora do Firestore (SocketException etc.).
+        developer.log('withdrawal intent error type=${e.runtimeType}',
+            name: 'WithdrawalService');
+        continue; // trata como rede instável ⇒ retry
       }
     }
     throw WithdrawalException(
       'Sem conexão para enviar a solicitação. Tente novamente.',
     );
   }
+
+  /// Códigos do Firestore que REALMENTE indicam problema de conectividade.
+  static bool _isOfflineCode(String code) =>
+      code == 'unavailable' || code == 'network-request-failed';
 
   /// Observa o saque até o runner concluir (completed/failed).
   Stream<WithdrawalResult> watchWithdrawal(String clientRequestId) =>

@@ -29,13 +29,37 @@ void main() {
         find.textContaining('não use endereço externo de carteira'),
         findsOneWidget,
       );
-      // Linha de taxa/recebido derivada da config (mínimo 20 − 2 = 18 coins
-      // ⇒ 1800 litoshi = 0,000018 LTC).
+      // Card de taxa MINIMALISTA: SOMENTE a taxa da config.
       expect(find.byKey(const ValueKey<String>('fee_line')), findsOneWidget);
-      expect(find.textContaining('Taxa: 2 COIN'), findsOneWidget);
-      expect(find.textContaining('0,000018 LTC'), findsOneWidget);
+      expect(find.text('Taxa: 2 COIN'), findsOneWidget);
+      // NADA de conversão/recebido no card (isso é só no sheet).
+      expect(find.textContaining('Você recebe'), findsNothing);
+      expect(find.textContaining('LTC'), findsNothing);
       // Rótulo "definidos pelo servidor".
       expect(find.textContaining('definidos pelo servidor'), findsOneWidget);
+    });
+
+    testWidgets('notifier amountCoins acompanha os dígitos digitados',
+        (WidgetTester tester) async {
+      final ValueNotifier<int> amountCoins = ValueNotifier<int>(0);
+      await tester.pumpWidget(_wrap(WithdrawForm(
+        asset: _ltc,
+        availableBalance: BigInt.from(100000000),
+        amountCoins: amountCoins,
+        onSubmit: (_, _) {},
+      )));
+
+      await tester.enterText(find.byType(TextField).last, '10');
+      await tester.pump();
+      expect(amountCoins.value, 10);
+
+      await tester.enterText(find.byType(TextField).last, '25,5');
+      await tester.pump();
+      expect(amountCoins.value, 25); // floor
+
+      await tester.enterText(find.byType(TextField).last, '');
+      await tester.pump();
+      expect(amountCoins.value, 0); // vazio = 0
     });
 
     testWidgets('e-mail inválido bloqueia o submit localmente',

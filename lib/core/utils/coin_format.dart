@@ -33,6 +33,18 @@ abstract final class CoinFormat {
   static String formatWithTicker(BigInt minimalUnits) =>
       '${formatMinimalUnits(minimalUnits)} $kDisplayCoinTicker';
 
+  /// Formata LITOSHI como decimal LTC pt-BR (até 8 casas, zeros à direita
+  /// aparados). Ex.: 1800 → "0,000018"; 0 → "0". APENAS apresentação —
+  /// o cálculo oficial é 100% do backend.
+  static String formatLitoshi(BigInt litoshi) {
+    final BigInt whole = litoshi ~/ BigInt.from(100000000);
+    final BigInt frac = litoshi % BigInt.from(100000000);
+    String fracStr = frac.toString().padLeft(8, '0');
+    fracStr = fracStr.replaceFirst(RegExp(r'0+$'), '');
+    if (fracStr.isEmpty) return '$whole';
+    return '$whole,$fracStr';
+  }
+
   /// Agrupa a parte inteira em blocos de 3 com "." (pt-BR).
   static String _groupThousands(String digits) {
     final StringBuffer out = StringBuffer();

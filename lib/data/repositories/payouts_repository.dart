@@ -2,6 +2,21 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../../core/constants/collections.dart';
 
+/// Allowlist EXATA de campos do intent de saque — ESPELHO do
+/// `hasOnly([...])` das rules v3 (withdrawalIntents). Qualquer campo a mais
+/// ou a menos ⇒ PERMISSION_DENIED no create. Usado p/ validar o payload nos
+/// testes (unit) contra as rules.
+const Set<String> kWithdrawalIntentAllowedKeys = <String>{
+  'uid',
+  'asset',
+  'amountUnits',
+  'destinationEmail',
+  'destinationMasked',
+  'clientRequestId',
+  'createdAt',
+  'clientVersion',
+};
+
 /// Ativo de saque — espelho SOMENTE-LEITURA de um item de
 /// `config/payouts.assets` ("valores definidos pelo servidor").
 class PayoutAsset {
@@ -11,10 +26,12 @@ class PayoutAsset {
     required this.enabled,
     required this.minWithdrawUnits,
     required this.feeUnits,
+    this.litoshiPerCoin = 100,
+    this.displayRate = '1 COIN = 0,000001 LTC',
   });
 
   final String id; // BTC | LTC | DOGE | USDT
-  final String network; // Bitcoin | Litecoin | Dogecoin | TRC20
+  final String network; // FaucetPayEmail (v3) | Bitcoin | Litecoin | …
   final bool enabled;
 
   /// Mínimo de saque em units (1 coin = 1e6 units).
@@ -22,6 +39,12 @@ class PayoutAsset {
 
   /// Taxa do servidor em units (descontada do valor bruto).
   final BigInt feeUnits;
+
+  /// Conversão FIXA v3: 1 COIN = N litoshi (apresentação; oficial no backend).
+  final int litoshiPerCoin;
+
+  /// Rótulo de exibição da conversão (definido pelo servidor).
+  final String displayRate;
 
   static BigInt _toBigInt(Object? value) {
     if (value is int) return BigInt.from(value);
@@ -36,6 +59,10 @@ class PayoutAsset {
         enabled: map['enabled'] == true,
         minWithdrawUnits: _toBigInt(map['minWithdrawUnits']),
         feeUnits: _toBigInt(map['feeUnits']),
+        litoshiPerCoin:
+            (map['litoshiPerCoin'] is int) ? map['litoshiPerCoin'] as int : 100,
+        displayRate: (map['displayRate'] as String?) ??
+            '1 COIN = 0,000001 LTC',
       );
 }
 
@@ -235,7 +262,9 @@ class PayoutsRepository implements PayoutsRepositoryApi {
         .set(<String, dynamic>{
       'uid': uid,
       'asset': asset,
-      'amountUnits': amountUnits.toString(),
+      // Rules exigem amountUnits is INT — NUNCA string (string ⇒
+      // PERMISSION_DENIED). BigInt cabe em int64 p/ valores realistas.
+      'amountUnits': amountUnits.toInt(),
       'destinationEmail': destinationEmail,
       'destinationMasked': destinationMasked,
       'clientRequestId': clientRequestId,
