@@ -46,6 +46,24 @@ participação).
   recompensa do bloco`, SEMPRE rotulada **ESTIMADA** — não é promessa de
   crédito; o crédito real ocorre no fechamento do bloco pelo runner.
 
+### Prova em produção (2026-08-25, ação `blockDiag` ENV=dev, uids mascarados)
+
+- `config`: blockRewardUnits=5000000 · economicRuleVersion=2 · residueUnits=0
+- `blocks/5958960` e `blocks/5958961`: status=finalized · baseReward=5000000 ·
+  effective=5000000 · **distributedTotal=5000000** · residue=0 ·
+  networkPower=125000 · userCount=1 · ruleVersion=2
+- Transação `REWARD_BLOCK`: amount=**5000000** (5 COIN cheios — único
+  elegível) · ruleVersion=2 · status=COMPLETED
+
+### Correção incluída (12.23)
+
+`closeBlocks` tinha um DEADLOCK: com o ponteiro `lastFinalizedPeriodKey`
+AUSENTE, o fallback `?? currentPeriod - 1` fazia o loop nunca executar e o
+ponteiro nunca ser gravado — NENHUM bloco fechava (comprovado pelos logs:
+`closedPeriods=[]` mesmo com intervalos de ~49 min entre runs). Fix: bootstrap
+grava o ponteiro inicial SEM distribuir (sem cunhagem retroativa); a partir da
+fronteira seguinte os blocos fecham normalmente.
+
 ### Implementação
 
 - Seed idempotente: `backend/src/seed.ts` → `upgradeEconomyBlockRewardV2`
