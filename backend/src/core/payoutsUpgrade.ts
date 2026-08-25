@@ -130,6 +130,41 @@ export const PAYOUTS_V4_META: Record<string, unknown> = {
   futureRateSource: 'usd_auto', // documental — sem feed implementado
 };
 
+/**
+ * Fallback CONSERVADOR do mínimo REAL do envio interno FaucetPay (12.10).
+ * A API não expõe o mínimo do envio por e-mail (/fees traz só taxas de
+ * carteira externa) ⇒ o probe grava 1800 litoshi = LÍQUIDO EXATO do saque
+ * mínimo da plataforma (20 COIN − 2 COIN) × 100 litoshi/coin. Garantias:
+ *  - desbloqueia o gate LIVE (providerMinLitoshi null ⇒ BELOW_MIN);
+ *  - a plataforma nunca enviaria abaixo disso de qualquer forma (mínimo);
+ *  - se o provedor rejeitar de verdade ⇒ erro tipado BELOW_MIN + estorno.
+ */
+export const FALLBACK_PROVIDER_MIN_LITOSHI = 1800;
+
+/**
+ * MERGE SEGURO do mínimo confirmado pelo payoutProbe (12.10): parte do doc
+ * canônico v4 e GRAVA EM LTC.providerMinLitoshi SOMENTE valor MAIOR OU IGUAL
+ * ao existente (nunca ABAIXA a barreira já confirmada). Idempotente: aplicar
+ * 2× com o mesmo valor produz exatamente o mesmo doc. Marca a proveniência
+ * em `providerMinSource` (nível doc; ignorado pelo normalizador).
+ */
+export function applyProbeMinimum(
+  raw: Record<string, unknown> | null | undefined,
+  minLitoshi: number,
+): Record<string, unknown> {
+  const doc = buildPayoutsV4Doc(raw);
+  const assets = doc.assets as Record<string, PayoutAssetV4>;
+  const ltc = assets.LTC ?? { ...PAYOUTS_ASSET_V4.LTC };
+  const current =
+    typeof ltc.providerMinLitoshi === 'number' ? ltc.providerMinLitoshi : null;
+  const next = current === null ? minLitoshi : Math.max(current, minLitoshi);
+  return {
+    ...doc,
+    assets: { ...assets, LTC: { ...ltc, providerMinLitoshi: next } },
+    providerMinSource: 'payoutProbe',
+  };
+}
+
 /** Destino canônico v4 — LTC único habilitado (taxa fixa 100 litoshi/coin). */
 export const PAYOUTS_ASSET_V4: Record<string, PayoutAssetV4> = {
   LTC: {

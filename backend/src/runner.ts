@@ -10,6 +10,7 @@
  * Em ENV != dev é no-op com log claro — nunca roda em produção.
  */
 import { FieldValue, Firestore } from 'firebase-admin/firestore';
+import { getAuth } from 'firebase-admin/auth';
 import { initAdmin } from './admin';
 import { processGameSessions } from './processors/processGameSessions';
 import { processPurchaseIntents } from './processors/processPurchaseIntents';
@@ -28,7 +29,14 @@ import { getEconomyConfig } from './core/config';
 import { toInt } from './core/precision';
 import { writeAudit, auditEventId } from './core/audit';
 import { utcDayKey } from './core/ratelimit';
+import {
+  applyProbeMinimum,
+  FALLBACK_PROVIDER_MIN_LITOSHI,
+} from './core/payoutsUpgrade';
 import { FaucetPayProvider, decimalToUnits } from './providers/faucetpay_provider';
+
+/** Web API key PÚBLICA do Firebase (vai no APK/google-services.json; não é segredo). */
+const FIREBASE_WEB_API_KEY_DEFAULT = 'AIzaSyBvCZihaRu6Zrwf9BdZheadQw1Bsdto1JE';
 
 type Processor = { name: string; run: (db: Firestore) => Promise<unknown> };
 
@@ -129,7 +137,12 @@ export async function runDevTopUp(
 export async function runPayoutProbe(
   db: Firestore,
   opts: { env: string },
-): Promise<{ executed: boolean; keyValid?: boolean }> {
+): Promise<{
+  executed: boolean;
+  keyValid?: boolean;
+  providerMinLitoshi?: number;
+  wroteProviderMin?: boolean;
+}> {
   if (opts.env !== 'dev') {
     console.log(
       `[runner] payoutProbe SKIP: requer repo variable ENV=dev (atual='${opts.env}'). Nada foi executado.`,
@@ -175,36 +188,190 @@ export async function runPayoutProbe(
     }
   }
 
-  // v3: mínimo REAL do envio INTERNO por e-mail (LTC/litoshi). Quando a API
-  // expõe o mínimo, compara com o providerMinLitoshi da config e recomenda
-  // ajuste de minWithdrawCoins — o AJUSTE é registrado no relatório (a edição
-  // da config continua sendo ação humana/seed).
+  // v3/12.10: mínimo REAL do envio INTERNO por e-mail (LTC/litoshi). Quando a
+  // API expõe o mínimo, usa-o; caso contrário grava o fallback conservador
+  // (FALLBACK_PROVIDER_MIN_LITOSHI = líquido do saque mínimo da plataforma).
+  // Escrita SEMPRE via MERGE SEGURO (applyProbeMinimum): nunca ABAIXA um
+  // mínimo já confirmado e nunca envia payout.
   const ltcCfg = payouts.getAsset('LTC');
-  if (ltcCfg) {
-    const cfgMin = ltcCfg.providerMinLitoshi;
-    console.log(
-      `[runner] payoutProbe ltc providerMinLitoshi(config)=${cfgMin ?? 'null'}` +
-        ` minWithdrawCoins=${ltcCfg.minWithdrawUnits / 1_000_000n}`,
-    );
-    if (fees.ok) {
-      const ltcFee = fees.data.find((f) => f.asset.toUpperCase() === 'LTC');
-      if (ltcFee?.minUnits !== undefined) {
-        console.log(`[runner] payoutProbe ltc providerMinLitoshi(real)=${ltcFee.minUnits}`);
-        if (cfgMin === null || ltcFee.minUnits > cfgMin) {
-          console.log(
-            '[runner] payoutProbe RECOMMENDATION: mínimo REAL > config — ajustar ' +
-              'providerMinLitoshi/minWithdrawCoins em config/payouts (seed v3) e relatar.',
-          );
-        }
-      } else {
-        console.log(
-          '[runner] payoutProbe ltc providerMinLitoshi(real)=UNAVAILABLE ' +
-            '(API não expõe mínimo do envio interno)',
-        );
-      }
-    }
+  if (!ltcCfg) return { executed: true, keyValid: true };
+
+  const cfgMin = ltcCfg.providerMinLitoshi;
+  console.log(
+    `[runner] payoutProbe ltc providerMinLitoshi(config)=${cfgMin ?? 'null'}` +
+      ` minWithdrawCoins=${ltcCfg.minWithdrawUnits / 1_000_000n}`,
+  );
+  const ltcBalance = balances.data.find((b) => b.asset.toUpperCase() === 'LTC');
+  if (ltcBalance) {
+    const s = ltcBalance.balanceUnits.toString();
+    const masked = s.length <= 2 ? '*'.repeat(s.length) : `${s[0]}*${'*'.repeat(Math.max(s.length - 2, 1))}${s[s.length - 1]}`;
+    console.log(`[runner] payoutProbe ltc saldoDisponivelMasked=${masked} units`);
   }
-  return { executed: true, keyValid: true };
+  const ltcFee = fees.ok
+    ? fees.data.find((f) => f.asset.toUpperCase() === 'LTC')
+    : undefined;
+  if (fees.ok && ltcFee) {
+    const min = ltcFee.minUnits !== undefined ? ` min=${ltcFee.minUnits}` : '';
+    console.log(`[runner] payoutProbe ltc taxaEnvioInterno feeUnits=${ltcFee.feeUnits}${min}`);
+  } else {
+    console.log('[runner] payoutProbe fees UNAVAILABLE (taxas best-effort; saldo já provou a chave)');
+  }
+
+  const apiMinRaw = ltcFee?.minUnits;
+  const apiMin = apiMinRaw === undefined ? undefined : Number(apiMinRaw);
+  const candidate = apiMin ?? FALLBACK_PROVIDER_MIN_LITOSHI;
+  const source = apiMin !== undefined ? 'api' : 'fallback_plataforma';
+  console.log(
+    `[runner] payoutProbe ltc providerMinLitoshi(real)=${candidate} source=${source}`,
+  );
+  const cfgMinNum = cfgMin === null ? null : Number(cfgMin);
+  if (cfgMinNum !== null && candidate <= cfgMinNum) {
+    console.log('[runner] payoutProbe WRITE SKIP: config já possui mínimo >= candidato');
+    return {
+      executed: true,
+      keyValid: true,
+      providerMinLitoshi: cfgMinNum,
+      wroteProviderMin: false,
+    };
+  }
+  const payoutsRef = db.doc('config/payouts');
+  const rawSnap = await payoutsRef.get();
+  await payoutsRef.set(applyProbeMinimum(rawSnap.data() ?? null, candidate), { merge: true });
+  console.log(
+    `[runner] payoutProbe WRITE OK providerMinLitoshi=${candidate} source=${source} (merge seguro em config/payouts v4)`,
+  );
+  return { executed: true, keyValid: true, providerMinLitoshi: candidate, wroteProviderMin: true };
+}
+
+/**
+ * rulesProbe (12.10) — VERIFICAÇÃO das Security Rules publicadas.
+ * Simula EXATAMENTE o cliente: cria custom token admin ⇒ troca por ID token
+ * real (Identity Toolkit REST) ⇒ tenta CRIAR uma withdrawalIntents válida via
+ * Firestore REST com credenciais DE USUÁRIO (Admin SDK bypassaria as rules).
+ *  - 200 ⇒ rules publicadas e gate de saque operante;
+ *  - 403 ⇒ PERMISSION_DENIED — rules ainda não publicadas corretamente.
+ * Limpeza: intent de teste removida + usuário probe excluído (admin).
+ */
+export async function runRulesProbe(
+  db: Firestore,
+  opts: { env: string },
+): Promise<{ executed: boolean; ok?: boolean }> {
+  if (opts.env !== 'dev') {
+    console.log(
+      `[runner] rulesProbe SKIP: requer repo variable ENV=dev (atual='${opts.env}'). Nada foi executado.`,
+    );
+    return { executed: false };
+  }
+  const { projectId } = initAdmin();
+  const auth = getAuth();
+  const uid = `rulesprobe${Date.now().toString(36)}`;
+  const requestId = `probe${Date.now().toString(36)}ok`;
+  try {
+    const customToken = await auth.createCustomToken(uid);
+    const webKey =
+      String(process.env.FIREBASE_WEB_API_KEY ?? '').trim() || FIREBASE_WEB_API_KEY_DEFAULT;
+
+    // 1) Custom token ⇒ ID token de USUÁRIO real (como o app faz).
+    const exRes = await fetch(
+      `https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=${webKey}`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ token: customToken, returnSecureToken: true }),
+      },
+    );
+    const exBody = (await exRes.json().catch(() => null)) as { idToken?: string } | null;
+    const idToken = exBody?.idToken;
+    if (!idToken) throw new Error('CUSTOM_TOKEN_EXCHANGE_FAILED');
+
+    // 2) CREATE withdrawalIntent com campos EXATOS exigidos pelas rules.
+    const url =
+      `https://firestore.googleapis.com/v1/projects/${projectId}` +
+      `/databases/(default)/documents/withdrawalIntents/${requestId}`;
+    const createRes = await fetch(url, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${idToken}` },
+      body: JSON.stringify({
+        fields: {
+          uid: { stringValue: uid },
+          asset: { stringValue: 'LTC' },
+          amountUnits: { integerValue: '20000000' }, // 20 COIN (mínimo)
+          destinationEmail: { stringValue: 'rules.probe@example.com' },
+          destinationMasked: { stringValue: 'ru***@example.com' },
+          clientRequestId: { stringValue: requestId },
+          createdAt: { timestampValue: new Date().toISOString() },
+          clientVersion: { stringValue: 'rules-probe-1' },
+        },
+      }),
+    });
+    if (createRes.ok) {
+      console.log(
+        `[runner] rulesProbe OK: withdrawalIntent criada como CLIENTE (rules publicadas) intentId=${requestId}`,
+      );
+    } else {
+      const status = createRes.status;
+      const code = status === 403 ? 'PERMISSION_DENIED' : `HTTP_${status}`;
+      // Diagnóstico diferencial com o MESMO token de usuário:
+      //  a) leitura config/economy — OK ⇒ autenticação/rules ATIVAS;
+      //  b) CREATE claims/{id} — existe em rulesets desde cedo; OK +
+      //     withdrawalIntents NEGADA ⇒ ruleset publicado é ANTERIOR ao bloco
+      //     v3 de saques (precisa republicar firestore.rules atual).
+      let diagRead = 'SKIPPED';
+      let diagClaim = 'SKIPPED';
+      try {
+        const diagRes = await fetch(
+          `https://firestore.googleapis.com/v1/projects/${projectId}` +
+            `/databases/(default)/documents/config/economy`,
+          { headers: { authorization: `Bearer ${idToken!}` } },
+        );
+        diagRead = diagRes.ok ? 'OK' : `HTTP_${diagRes.status}`;
+      } catch {
+        diagRead = 'NETWORK_ERROR';
+      }
+      try {
+        const claimRes = await fetch(
+          `https://firestore.googleapis.com/v1/projects/${projectId}` +
+            `/databases/(default)/documents/claims/${requestId}`,
+          {
+            method: 'PATCH',
+            headers: { 'content-type': 'application/json', authorization: `Bearer ${idToken!}` },
+            body: JSON.stringify({
+              fields: {
+                uid: { stringValue: uid },
+                kind: { stringValue: 'mission' },
+                refId: { stringValue: 'rules-probe' },
+                clientRequestId: { stringValue: requestId },
+                createdAt: { timestampValue: new Date().toISOString() },
+                status: { stringValue: 'pending' },
+              },
+            }),
+          },
+        );
+        diagClaim = claimRes.ok ? 'OK' : `HTTP_${claimRes.status}`;
+      } catch {
+        diagClaim = 'NETWORK_ERROR';
+      }
+      console.error(
+        `[runner] rulesProbe FAILED=${code} diagReadConfigEconomy=${diagRead}` +
+          ` diagCreateClaim=${diagClaim} — ` +
+          (diagRead !== 'OK'
+            ? 'rules ainda não publicadas corretamente'
+            : diagClaim === 'OK'
+              ? 'rules ATIVAS mas SEM o bloco withdrawalIntents v3 (republicar firestore.rules)'
+              : 'rules ATIVAS mas regra de withdrawalIntents nega (comparar versão publicada vs firestore.rules)'),
+      );
+      return { executed: true, ok: false };
+    }
+    return { executed: true, ok: true };
+  } catch (err) {
+    console.error(`[runner] rulesProbe FAILED=${sanitize(err)}`);
+    return { executed: true, ok: false };
+  } finally {
+    // 3) Limpeza (admin): intent de teste + usuário probe. Nunca crasha.
+    await db.doc(`withdrawalIntents/${requestId}`).delete().catch(() => undefined);
+    await db.doc(`claims/${requestId}`).delete().catch(() => undefined);
+    await auth.deleteUser(uid).catch(() => undefined);
+  }
 }
 
 export interface PayoutLiveTestOptions {
@@ -333,6 +500,20 @@ async function main(): Promise<void> {
       process.exitCode = 0;
     } catch (err) {
       console.error(`[runner] payoutProbe FAILED=${sanitize(err)}`);
+      process.exitCode = 1;
+    }
+    return;
+  }
+
+  if (action === 'rulesProbe') {
+    try {
+      await runRulesProbe(db, {
+        env: String(process.env.APP_ENV ?? '').trim().toLowerCase(),
+      });
+      console.log(`[runner] done in ${Date.now() - startedAt}ms`);
+      process.exitCode = 0;
+    } catch (err) {
+      console.error(`[runner] rulesProbe FAILED=${sanitize(err)}`);
       process.exitCode = 1;
     }
     return;

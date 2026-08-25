@@ -152,6 +152,27 @@ andamento — acompanhar até zerar pendências antes/depois do rollback.
   (3) aguardar ≤5 min e conferir status + chegada do saldo na FaucetPay;
   (4) voltar para `test` para pausar pagamentos.
 
+## 7.6 v4/12.10 — rulesProbe + providerMinLitoshi gravado pelo probe
+
+- **rulesProbe** (action nova; ENV=dev): verifica se as Security Rules estão
+  PUBLICADAS criando uma `withdrawalIntents` EXATAMENTE como o cliente —
+  custom token admin ⇒ ID token real (Identity Toolkit REST) ⇒ Firestore REST.
+  Admin SDK bypassaria as rules, então a prova é feita com credencial de
+  USUÁRIO. OK ⇒ `rulesProbe OK`; 403 ⇒ `PERMISSION_DENIED` (rules não
+  publicadas). Limpa a intent de teste + usuário probe ao final.
+- **payoutProbe agora GRAVA o mínimo**: a API da FaucetPay não expõe o mínimo
+  do envio interno por e-mail (`/fees` traz só taxas de carteira externa).
+  Quando indisponível, o probe grava em `config/payouts` (v4, MERGE seguro)
+  `assets.LTC.providerMinLitoshi = 1800` — o LÍQUIDO exato do saque mínimo da
+  plataforma ((20 − 2 COIN) × 100 litoshi), com `providerMinSource=payoutProbe`.
+  Garantias: nunca ABAIXA um mínimo já confirmado (`applyProbeMinimum`);
+  desbloqueia o gate LIVE; rejeição real do provedor continua coberta pelo
+  erro tipado `BELOW_MIN` + estorno integral. Se um dia a API expuser o
+  mínimo (`minUnits`), ele prevalece (e sobe a barreira se maior).
+- **Ordem recomendada de testes LIVE** (cooldown 24h após SUCESSO):
+  (1) caminho de FALHA primeiro (e-mail inexistente na FaucetPay ⇒ failed +
+  estorno integral, sem cooldown); (2) depois o saque mínimo de sucesso.
+
 ## 8. Responsáveis e incidentes
 
 - **Owner:** dono do repo (único com acesso aos secrets no GitHub).

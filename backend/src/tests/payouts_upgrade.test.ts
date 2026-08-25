@@ -4,9 +4,11 @@
  * (aplicar 2× = mesmo resultado) e doc ausente ⇒ cria já em v3.
  */
 import {
+  FALLBACK_PROVIDER_MIN_LITOSHI,
   PAYOUTS_ASSET_V2,
   PAYOUTS_V1,
   applyPayoutsAssetV3,
+  applyProbeMinimum,
   buildPayoutsV3Doc,
   buildPayoutsV4Doc,
   normalizePayoutsDoc,
@@ -205,5 +207,45 @@ describe('SCHEMA CANÔNICO v4 (12.9): normalização de legado', () => {
     expect((ltc.minWithdrawCoins - ltc.feeCoins) * ltc.litoshiPerCoin).toBe(
       1800,
     );
+  });
+});
+
+describe('applyProbeMinimum (12.10 — gravação do mínimo real pelo payoutProbe)', () => {
+  it('doc null + fallback ⇒ LTC.providerMinLitoshi gravado e version=4', () => {
+    const doc = applyProbeMinimum(null, FALLBACK_PROVIDER_MIN_LITOSHI);
+    expect(doc.version).toBe(4);
+    const assets = doc.assets as Record<string, Record<string, unknown>>;
+    expect(assets.LTC!.providerMinLitoshi).toBe(FALLBACK_PROVIDER_MIN_LITOSHI);
+    expect(doc.providerMinSource).toBe('payoutProbe');
+  });
+
+  it('NUNCA ABAIXA um mínimo já confirmado (merge seguro)', () => {
+    const withMin = applyProbeMinimum(null, 5000);
+    const again = applyProbeMinimum(withMin, 1800); // candidato menor
+    const assets = again.assets as Record<string, Record<string, unknown>>;
+    expect(assets.LTC!.providerMinLitoshi).toBe(5000);
+  });
+
+  it('candidato MAIOR sobe a barreira (mínimo real > config)', () => {
+    const withMin = applyProbeMinimum(null, 1800);
+    const raised = applyProbeMinimum(withMin, 9000);
+    const assets = raised.assets as Record<string, Record<string, unknown>>;
+    expect(assets.LTC!.providerMinLitoshi).toBe(9000);
+  });
+
+  it('idempotente: aplicar 2× com o mesmo valor produz o mesmo doc', () => {
+    const once = applyProbeMinimum(null, 1800);
+    const twice = applyProbeMinimum(once, 1800);
+    expect(twice).toEqual(once);
+  });
+
+  it('preserva escalares antifraude e demais ativos do doc existente', () => {
+    const base = buildPayoutsV4Doc({ cooldownHours: 12, maxPerDay: 5 });
+    const out = applyProbeMinimum(base, 1800);
+    expect(out.cooldownHours).toBe(12);
+    expect(out.maxPerDay).toBe(5);
+    const assets = out.assets as Record<string, Record<string, unknown>>;
+    expect(assets.BTC!.enabled).toBe(false);
+    expect(assets.LTC!.minWithdrawCoins).toBe(20);
   });
 });

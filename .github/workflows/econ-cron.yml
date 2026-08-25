@@ -25,12 +25,13 @@ on:
   workflow_dispatch:
     inputs:
       action:
-        description: 'run = economic runner | seed = dev seed | devTopUp = crédito de dev (ENV=dev) | payoutProbe = leitura read-only FaucetPay (ENV=dev) | payoutLiveTest = micro-payout REAL (PAYOUT_MODE=live + inputs)'
+        description: 'run = economic runner | seed = dev seed | devTopUp = crédito de dev (ENV=dev) | rulesProbe = verificação das rules (ENV=dev) | payoutProbe = leitura FaucetPay + grava providerMinLitoshi (ENV=dev) | payoutLiveTest = micro-payout REAL (PAYOUT_MODE=live + inputs)'
         type: choice
         options:
           - run
           - seed
           - devTopUp
+          - rulesProbe
           - payoutProbe
           - payoutLiveTest
         default: run
@@ -112,10 +113,22 @@ jobs:
         working-directory: backend
         run: node dist/seed.js
 
-      # payoutProbe: validação READ-ONLY da chave FaucetPay (balance/fees).
-      # GATE no runner: só executa com repo variable ENV=dev. NUNCA envia
-      # payout; nunca imprime a chave (só status válido/inválido + saldos).
-      - name: Payout probe (read-only, ENV=dev only)
+      # rulesProbe: verifica se as Security Rules estão publicadas criando uma
+      # withdrawalIntent COMO CLIENTE (custom token ⇒ ID token ⇒ Firestore
+      # REST). GATE: ENV=dev. Limpa a intent de teste ao final.
+      - name: Rules probe (client-like intent create, ENV=dev only)
+        if: github.event_name == 'workflow_dispatch' && inputs.action == 'rulesProbe'
+        working-directory: backend
+        env:
+          RUNNER_ACTION: rulesProbe
+          APP_ENV: ${{ vars.ENV }}
+        run: node dist/runner.js
+
+      # payoutProbe: valida a chave FaucetPay (balance/fees), lê saldo/taxa e
+      # GRAVA providerMinLitoshi em config/payouts v4 (merge seguro; nunca
+      # abaixo do já confirmado). GATE no runner: repo variable ENV=dev.
+      # NUNCA envia payout; nunca imprime a chave (só status/saldos mascarados).
+      - name: Payout probe (read-only + write providerMin, ENV=dev only)
         if: github.event_name == 'workflow_dispatch' && inputs.action == 'payoutProbe'
         working-directory: backend
         env:
