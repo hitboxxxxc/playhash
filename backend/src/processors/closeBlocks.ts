@@ -142,6 +142,42 @@ async function creditUsers(
   return credited;
 }
 
+/**
+ * AUDITORIA DE FONTE (12.23): BLOCK_REWARD vem EXCLUSIVAMENTE de
+ * config/economy via getEconomyConfig (closeBlocks → economy.blockRewardUnits).
+ * NÃO EXISTE valor de recompensa hardcoded neste processador: o único literal
+ * é o currencyId 'coins'. Elegibilidade = totalPower > 0 (loadUserPowers);
+ * NETWORK_POWER = Σ totalPower; divisão BigInt floor com resíduo carregado
+ * para o próximo bloco; idempotência por periodKey (blocks/{periodKey}
+ * 'finalized' + transactions/{txId} determinístico — mesmo bloco nunca 2×).
+ */
+
+/**
+ * Espelho PÚBLICO do último bloco finalizado (blocks/current) — única fonte
+ * da UI de MINERAÇÃO (doc 05 §47/§48): recompensa-base da CONFIG,
+ * NETWORK_POWER do bloco e nextBlockAt alinhado ao múltiplo exato de
+ * blockIntervalMs do relógio do SERVIDOR (periodKey é epoch-based). O cliente
+ * usa estes campos apenas para APRESENTAÇÃO/estimativa — nunca decide valor.
+ */
+function publicBlockMirror(
+  economy: EconomyConfig,
+  period: number,
+  totals: BlockTotals,
+): Record<string, unknown> {
+  return {
+    periodKey: String(period),
+    status: 'finalized',
+    // Recompensa-BASE da config (sem resíduo) — "RECOMPENSA DO BLOCO" na UI.
+    totalBlockRewardMinimalUnits: economy.blockRewardUnits.toString(),
+    networkPower: totals.networkPower.toString(),
+    userCount: totals.userCount,
+    // Próximo múltiplo do intervalo no tempo do servidor (display apenas).
+    nextBlockAt: new Date((period + 1) * economy.blockIntervalMs),
+    ruleVersion: economy.economicRuleVersion,
+    updatedAt: FieldValue.serverTimestamp(),
+  };
+}
+
 /** Finaliza UM período. Retorna false se o bloco já estava finalizado. */
 export async function finalizePeriod(
   db: Firestore,
@@ -230,6 +266,9 @@ export async function finalizePeriod(
       lastFinalizedPeriodKey: period,
       updatedAt: FieldValue.serverTimestamp(),
     });
+    // Espelho público p/ MINERAÇÃO (leitura autenticada nas rules; escrita
+    // SOMENTE Admin SDK). Id fixo 'current' ⇒ sempre reflete o ÚLTIMO bloco.
+    tx.set(db.doc('blocks/current'), publicBlockMirror(economy, period, totals));
   });
 
   await writeAudit(db, {

@@ -69,3 +69,65 @@ describe('carry de resíduo entre blocos', () => {
     expect(result.rewards.get('whale')!).toBeLessThanOrEqual(BASE_REWARD);
   });
 });
+
+/**
+ * 12.23 — BLOCK_REWARD = 5 COIN (5.000.000 units, coinPrecision = 1.000.000).
+ * Decisão do dono: 1 jogador elegível recebe TUDO; múltiplos dividem por
+ * USER_POWER/NETWORK_POWER (BigInt floor) com resíduo carregado.
+ */
+const REWARD_5_COIN = 5_000_000n;
+
+describe('BLOCK_REWARD = 5 COIN (12.23)', () => {
+  it('único jogador elegível recebe EXATAMENTE 5.000.000 units (5 COIN cheios)', () => {
+    const result = distributeBlockReward(REWARD_5_COIN, [
+      { uid: 'solo', power: 42_000n },
+    ]);
+    expect(result.rewards.size).toBe(1);
+    expect(result.rewards.get('solo')).toBe(5_000_000n);
+    expect(result.distributedTotal).toBe(5_000_000n);
+    expect(result.residueUnits).toBe(0n);
+  });
+
+  it('dois jogadores 100/300 PH/s dividem 1.250.000 / 3.750.000', () => {
+    // NETWORK_POWER = 400; floor(5.000.000 × 100/400) = 1.250.000;
+    // floor(5.000.000 × 300/400) = 3.750.000; resíduo zero.
+    const result = distributeBlockReward(REWARD_5_COIN, [
+      { uid: 'small', power: 100n },
+      { uid: 'big', power: 300n },
+    ]);
+    expect(result.rewards.get('small')).toBe(1_250_000n);
+    expect(result.rewards.get('big')).toBe(3_750_000n);
+    expect(result.distributedTotal).toBe(5_000_000n);
+    expect(result.residueUnits).toBe(0n);
+  });
+
+  it('caso indivisível: resíduo é carregado para o próximo bloco', () => {
+    // 3 miners de poder igual: floor(5.000.000/3) = 1.666.666 cada;
+    // distribuído = 4.999.998; resíduo = 2 → entra no bloco seguinte.
+    const powers = [
+      { uid: 'a', power: 7n },
+      { uid: 'b', power: 7n },
+      { uid: 'c', power: 7n },
+    ];
+    const blockN = distributeBlockReward(REWARD_5_COIN, powers);
+    expect(blockN.rewards.get('a')).toBe(1_666_666n);
+    expect(blockN.rewards.get('b')).toBe(1_666_666n);
+    expect(blockN.rewards.get('c')).toBe(1_666_666n);
+    expect(blockN.residueUnits).toBe(2n);
+
+    // Bloco N+1: reward efetivo = 5.000.002 → conserva o total emitido.
+    const blockN1 = distributeBlockReward(REWARD_5_COIN + blockN.residueUnits, powers);
+    expect(blockN1.distributedTotal + blockN1.residueUnits).toBe(REWARD_5_COIN + 2n);
+  });
+
+  it('rede vazia carrega os 5 COIN inteiros para o próximo bloco', () => {
+    const empty = distributeBlockReward(REWARD_5_COIN, []);
+    expect(empty.distributedTotal).toBe(0n);
+    expect(empty.residueUnits).toBe(5_000_000n);
+
+    const next = distributeBlockReward(REWARD_5_COIN + empty.residueUnits, [
+      { uid: 'late', power: 1n },
+    ]);
+    expect(next.rewards.get('late')).toBe(10_000_000n); // 2 blocos acumulados
+  });
+});

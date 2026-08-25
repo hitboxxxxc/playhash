@@ -9,13 +9,20 @@
  */
 import { initAdmin } from './admin';
 
+/**
+ * DECISÃO DO DONO (12.23): BLOCK_REWARD = 5 COIN por bloco de 5 minutos.
+ * 5 COIN = 5.000.000 units (coinPrecision = 1.000.000). Instalações novas já
+ * nascem nesta versão; instalações existentes recebem MERGE idempotente via
+ * upgradeEconomyBlockRewardV2 (bump de economicRuleVersion preservando o
+ * ruleVersion das transações antigas — doc 05 §44).
+ */
 const ECONOMY = {
-  blockRewardUnits: 1_000_000, // 1 coin por bloco (coinPrecision = 6 casas)
+  blockRewardUnits: 5_000_000, // 5 coins por bloco (coinPrecision = 6 casas)
   blockIntervalMs: 300_000, // 5 minutos
   coinPrecision: 1_000_000,
   powerBasePerHs: 1_000,
   residueUnits: 0,
-  economicRuleVersion: 1,
+  economicRuleVersion: 2,
   limits: {
     maxSessionsPerDay: 50,
     maxPurchaseIntentsPerDay: 20,
@@ -564,6 +571,38 @@ async function upgradeMachinesToV2(
  * seguro. LTC enabled:true, litoshiPerCoin:100, minWithdrawCoins:20,
  * feeCoins:2; BTC/DOGE/USDT enabled:false. Rodar novamente = no-op.
  */
+/**
+ * Upgrade IDEMPOTENTE da economia para BLOCK_REWARD = 5 COIN (12.23):
+ * doc ausente => tratado pelo createIfMissing (já nasce em v2);
+ * blockRewardUnits != 5.000.000 OU economicRuleVersion < 2 => MERGE apenas
+ * dos campos {blockRewardUnits, economicRuleVersion = atual+1} (nunca toca
+ * em residueUnits/lastFinalizedPeriodKey/limits — resíduo e recuperação
+ * preservados). Rodar novamente = no-op. Transações antigas mantêm o
+ * ruleVersion com que foram gravadas (doc 05 §44).
+ */
+async function upgradeEconomyBlockRewardV2(
+  db: ReturnType<typeof initAdmin>['db'],
+): Promise<'upgraded' | 'current'> {
+  const ref = db.doc('config/economy');
+  const snap = await ref.get();
+  if (!snap.exists) return 'current'; // createIfMissing grava ECONOMY já em v2
+  const data = snap.data() ?? {};
+  const version = typeof data.economicRuleVersion === 'number'
+    ? Number(data.economicRuleVersion)
+    : 1;
+  const reward = Number(data.blockRewardUnits);
+  if (reward === 5_000_000 && version >= 2) return 'current';
+  await ref.set(
+    {
+      blockRewardUnits: 5_000_000,
+      economicRuleVersion: version + 1,
+      updatedAt: new Date(),
+    },
+    { merge: true },
+  );
+  return 'upgraded';
+}
+
 async function upgradePayoutsToV4(
   db: ReturnType<typeof initAdmin>['db'],
 ): Promise<'created' | 'upgraded' | 'current'> {
@@ -590,6 +629,7 @@ async function main(): Promise<void> {
 
   console.log(`[seed] config/economy: ${await createIfMissing(db, 'config/economy', ECONOMY)}`);
   console.log(`[seed] config/economy.machineSlots: ${await ensureMachineSlots(db)}`);
+  console.log(`[seed] config/economy.blockReward=5COIN (v2): ${await upgradeEconomyBlockRewardV2(db)}`);
   console.log(`[seed] config/catalog/machines (v2): ${await upgradeMachinesToV2(db)}`);
   for (const [id, data] of Object.entries(MACHINES)) {
     console.log(`[seed] config/catalog/machines/${id}: ${await createIfMissing(db, `config/catalog/machines/${id}`, data)}`);

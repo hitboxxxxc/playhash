@@ -10,7 +10,9 @@ import '../../data/models/machine_model.dart';
 import '../../data/models/power_model.dart';
 import '../../data/repositories/mining_repository.dart';
 import 'widgets/block_panel.dart';
+import 'widgets/block_reward_card.dart';
 import 'widgets/league_progress_card.dart';
+import 'widgets/next_block_countdown.dart';
 import 'widgets/power_distribution_chart.dart';
 import 'widgets/power_header.dart';
 import 'widgets/reward_history_list.dart';
@@ -187,6 +189,12 @@ class _MiningScreenState extends ConsumerState<MiningScreen>
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
         PowerHeader(totalPower: _power?.totalPower),
+        const SizedBox(height: 16),
+        // Recompensa do bloco + countdown (doc 05 §47/§48): valores SEMPRE
+        // do backend (blocks/current); participação rotulada ESTIMADA.
+        NextBlockCountdown(block: _block),
+        const SizedBox(height: 8),
+        BlockRewardCard(block: _block, estimate: _estimate),
         const SizedBox(height: 16),
         LeagueProgressCard(
           currentLeagueName: league?['leagueName'] as String?,
