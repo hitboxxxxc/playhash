@@ -66,10 +66,10 @@ export type ProviderReadResult<T> =
       /** Código seguro (sem dados sensíveis). */
       errorCode: string;
       /**
-       * Diagnóstico operacional: SHA-256 (prefixo) da mensagem BRUTA do
-       * provedor — permite identificar a causa SEM expor o conteúdo.
+       * Mensagem operacional do provedor SANITIZADA (tokens longos tipo
+       * chave/endereço são redigidos; truncada) — nunca contém credenciais.
        */
-      detailHash?: string;
+      detailMsg?: string;
     };
 
 /**

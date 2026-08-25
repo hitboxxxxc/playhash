@@ -152,10 +152,10 @@ export async function runPayoutProbe(
 
   const balances = await provider.getBalances(queries);
   if (!balances.ok) {
-    // detailHash = SHA-256 prefixo da mensagem bruta (diagnóstico sem exposição).
+    // detailMsg = mensagem do provedor sanitizada (tokens longos redigidos).
     console.error(
       `[runner] payoutProbe balance FAILED=${balances.errorCode}` +
-        (balances.detailHash ? `#${balances.detailHash}` : ''),
+        (balances.detailMsg ? ` msg="${balances.detailMsg}"` : ''),
     );
     return { executed: true, keyValid: balances.errorCode !== 'INVALID_CREDENTIALS' };
   }

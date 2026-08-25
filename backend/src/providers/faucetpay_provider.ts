@@ -11,7 +11,6 @@
  *    checar o resultado anterior).
  *  - Endereço completo e API key JAMAIS aparecem em logs (só códigos seguros).
  */
-import { createHash } from 'crypto';
 import {
   PayoutProvider,
   PayoutRequest,
@@ -49,9 +48,12 @@ function mapApiError(apiCode: string): string {
   }
 }
 
-/** SHA-256 prefixo da mensagem bruta — diagnóstico sem expor conteúdo. */
-function detailHash(raw: string): string {
-  return createHash('sha256').update(raw).digest('hex').slice(0, 10);
+/**
+ * Mensagem operacional sanitizada p/ log: redige qualquer token longo
+ * (padrão de chave/endereço) e trunca. Nunca expõe credenciais.
+ */
+function sanitizeDetail(raw: string): string {
+  return raw.replace(/[A-Za-z0-9]{20,}/g, '<redacted>').slice(0, 80);
 }
 
 export class FaucetPayProvider implements PayoutProvider, ReadonlyPayoutProvider {
@@ -150,7 +152,7 @@ export class FaucetPayProvider implements PayoutProvider, ReadonlyPayoutProvider
       if (!body) return { ok: false, errorCode: 'PROVIDER_BAD_JSON' };
       if (body.success !== true) {
         const raw = String(body['message'] ?? '');
-        return { ok: false, errorCode: mapApiError(raw), detailHash: detailHash(raw) };
+        return { ok: false, errorCode: mapApiError(raw), detailMsg: sanitizeDetail(raw) };
       }
       return { ok: true, data: body };
     } catch (err) {
@@ -188,7 +190,7 @@ export class FaucetPayProvider implements PayoutProvider, ReadonlyPayoutProvider
         if (!body) return { ok: false, errorCode: 'PROVIDER_BAD_JSON' };
         if (body.success !== true) {
           const raw = String(body['message'] ?? '');
-          return { ok: false, errorCode: mapApiError(raw), detailHash: detailHash(raw) };
+          return { ok: false, errorCode: mapApiError(raw), detailMsg: sanitizeDetail(raw) };
         }
       } catch (err) {
         const aborted = err instanceof Error && err.name === 'AbortError';
