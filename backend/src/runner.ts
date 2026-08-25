@@ -474,6 +474,104 @@ export async function runPayoutLiveTest(
   }
 }
 
+/** Máscara local de e-mail p/ logs do devDiag (nunca imprime o valor cheio). */
+function maskEmailLog(email: unknown): string {
+  if (typeof email !== 'string' || email.indexOf('@') <= 0) return '<masked>';
+  const at = email.indexOf('@');
+  return `${email.slice(0, Math.min(2, at))}***@${email.slice(at + 1)}`;
+}
+
+export interface DevDiagOptions {
+  env: string;
+  /** Zera cooldownHours em config/payouts (TEMPORÁRIO p/ teste E2E). */
+  relaxCooldown: boolean;
+  /** Zera os contadores wi_<hoje> em rateLimits (destrava cota das rules). */
+  resetWiQuota: boolean;
+}
+
+/**
+ * devDiag (12.11) — diagnóstico SOMENTE-LEITURA + relaxes OPCIONAIS de dev.
+ * Gate: SOMENTE executa com env === 'dev' (repo variable ENV).
+ * Imprime: config/payouts (mascarado), chaves de rateLimits relevantes ao
+ * gate dailyQuotaOk das rules e as últimas withdrawalIntents (mascaradas).
+ * Relaxes (explicitamente ligados por env): cooldownHours=0 e/ou reset da
+ * cota diária 'wi' — para viabilizar o E2E live sem esperar 24h.
+ */
+export async function runDevDiag(
+  db: Firestore,
+  opts: DevDiagOptions,
+): Promise<void> {
+  if (opts.env !== 'dev') {
+    console.log(
+      `[runner] devDiag SKIP: requer repo variable ENV=dev (atual='${opts.env}'). Nada foi executado.`,
+    );
+    return;
+  }
+
+  // ---- 1. config/payouts (resumo mascarado) ---------------------------
+  const payoutsSnap = await db.doc('config/payouts').get();
+  if (payoutsSnap.exists) {
+    const d = payoutsSnap.data() ?? {};
+    console.log(
+      `[diag] config/payouts version=${String(d.version)} cooldownHours=${String(d.cooldownHours)} maxPerDay=${String(d.maxPerDay)} minAccountAgeHours=${String(d.minAccountAgeHours)} requireFinishedGames=${String(d.requireFinishedGames)}`,
+    );
+  } else {
+    console.log('[diag] config/payouts AUSENTE');
+  }
+
+  // ---- 2. rateLimits: chaves que afetam o gate dailyQuotaOk ------------
+  const rulesKey = `wi_${utcDayKey(Date.now())}`;
+  const limits = await db.collection('rateLimits').limit(50).get();
+  console.log(`[diag] rateLimits docs=${limits.size} rulesKeyHoje=${rulesKey}`);
+  for (const doc of limits.docs) {
+    const data = doc.data();
+    const keys = Object.keys(data).slice(0, 20).join(',');
+    const wiVal = data[rulesKey];
+    console.log(
+      `[diag]   rateLimits/${doc.id} keys=[${keys}] ${rulesKey}=${wiVal === undefined ? '<ausente>' : String(wiVal)}`,
+    );
+  }
+
+  // ---- 3. últimas withdrawalIntents (mascarado) ------------------------
+  const intents = await db
+    .collection('withdrawalIntents')
+    .orderBy('createdAt', 'desc')
+    .limit(5)
+    .get();
+  console.log(`[diag] withdrawalIntents recentes count=${intents.size}`);
+  for (const doc of intents.docs) {
+    const v = doc.data();
+    console.log(
+      `[diag]   intent ${doc.id} uid=${String(v.uid)} asset=${String(v.asset)} amountUnits=${String(v.amountUnits)} destinationEmail=${maskEmailLog(v.destinationEmail)} clientVersion=${String(v.clientVersion)}`,
+    );
+  }
+
+  // ---- 4. RELAX opcional: cooldown 24h ⇒ 0 (temporário p/ teste) -------
+  if (opts.relaxCooldown) {
+    const before = Number((payoutsSnap.get('cooldownHours') ?? 24) as number);
+    await db.doc('config/payouts').set(
+      { cooldownHours: 0 },
+      { merge: true },
+    );
+    console.log(`[diag] RELAX cooldownHours ${before} -> 0 (TEMPORÁRIO p/ teste)`);
+  }
+
+  // ---- 5. RELAX opcional: zera contadores wi_ de hoje ------------------
+  if (opts.resetWiQuota) {
+    let reset = 0;
+    for (const doc of limits.docs) {
+      if (doc.data()[rulesKey] !== undefined) {
+        await db.doc(`rateLimits/${doc.id}`).set(
+          { [rulesKey]: 0 },
+          { merge: true },
+        );
+        reset++;
+      }
+    }
+    console.log(`[diag] RELAX cota wi resetada em ${reset} doc(s) de rateLimits`);
+  }
+}
+
 async function main(): Promise<void> {
   const startedAt = Date.now();
   const { db, projectId } = initAdmin();
@@ -521,6 +619,22 @@ async function main(): Promise<void> {
       process.exitCode = 0;
     } catch (err) {
       console.error(`[runner] rulesProbe FAILED=${sanitize(err)}`);
+      process.exitCode = 1;
+    }
+    return;
+  }
+
+  if (action === 'devDiag') {
+    try {
+      await runDevDiag(db, {
+        env: String(process.env.APP_ENV ?? '').trim().toLowerCase(),
+        relaxCooldown: process.env.DEV_RELAX_COOLDOWN === '1',
+        resetWiQuota: process.env.DEV_RESET_WI === '1',
+      });
+      console.log(`[runner] done in ${Date.now() - startedAt}ms`);
+      process.exitCode = 0;
+    } catch (err) {
+      console.error(`[runner] devDiag FAILED=${sanitize(err)}`);
       process.exitCode = 1;
     }
     return;

@@ -34,6 +34,7 @@ on:
           - rulesProbe
           - payoutProbe
           - payoutLiveTest
+          - devDiag
         default: run
         required: true
       uid:
@@ -58,6 +59,16 @@ on:
         default: ''
       payoutAmount:
         description: 'payoutLiveTest: valor decimal no ativo (vazio = providerMin da config/payouts v2)'
+        type: string
+        required: false
+        default: ''
+      devRelaxCooldown:
+        description: 'devDiag: "1" = zera cooldownHours em config/payouts (TEMPORÁRIO p/ teste E2E)'
+        type: string
+        required: false
+        default: ''
+      devResetWi:
+        description: 'devDiag: "1" = zera contadores wi_<hoje> em rateLimits (destrava cota das rules)'
         type: string
         required: false
         default: ''
@@ -135,6 +146,18 @@ jobs:
           RUNNER_ACTION: payoutProbe
           APP_ENV: ${{ vars.ENV }}
           FAUCETPAY_API_KEY: ${{ secrets.FAUCETPAY_API_KEY }}
+        run: node dist/runner.js
+
+      # devDiag (12.11): diagnóstico rateLimits/intents + relaxes opcionais de
+      # dev (cooldown=0, reset cota wi). GATE: ENV=dev.
+      - name: Dev diag (ENV=dev only)
+        if: github.event_name == 'workflow_dispatch' && inputs.action == 'devDiag'
+        working-directory: backend
+        env:
+          RUNNER_ACTION: devDiag
+          APP_ENV: ${{ vars.ENV }}
+          DEV_RELAX_COOLDOWN: ${{ inputs.devRelaxCooldown }}
+          DEV_RESET_WI: ${{ inputs.devResetWi }}
         run: node dist/runner.js
 
       # payoutLiveTest: MICRO-PAYOUT REAL (OPCIONAL; default NÃO executa).
