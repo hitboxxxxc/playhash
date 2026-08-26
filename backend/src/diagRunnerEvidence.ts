@@ -109,43 +109,66 @@ async function main(): Promise<void> {
   if (sessions.size > 0) targetUid = String(sessions.docs[0].get('uid') ?? '') || null;
   if (!targetUid && powers.size > 0) targetUid = powers.docs[0].id;
   if (targetUid) {
-    const um = await db.collection(`userMissions/${targetUid}/missions`).limit(20).get().catch(
-      () => null,
-    );
+    // 5) userMissions/{uid}/items (modelo real: subcoleção 'items').
+    const um = await db
+      .collection(`userMissions/${targetUid}/items`)
+      .limit(20)
+      .get()
+      .catch(() => null);
     if (um) {
       console.log(`[diag] userMissions uid=${maskId(targetUid)} docs=${um.size}`);
       for (const d of um.docs) {
         const x = d.data();
         console.log(
           `[diag] mission ${d.id} progress=${String(x.progress ?? '')} ` +
-            `goal=${String(x.goal ?? x.target ?? '')} claimed=${String(x.claimed ?? '')}`,
+            `periodKey=${String(x.periodKey ?? '')} claimed=${String(x.claimed ?? '')}`,
         );
       }
     } else {
       console.log(`[diag] userMissions uid=${maskId(targetUid)} COLEÇÃO AUSENTE/ERRO`);
     }
 
-    // 6) Profile stats do mesmo uid.
-    const prof = await db.doc(`profiles/${targetUid}`).get();
+    // 5b) userAchievements/{uid}/items.
+    const ua = await db
+      .collection(`userAchievements/${targetUid}/items`)
+      .limit(20)
+      .get()
+      .catch(() => null);
+    if (ua) {
+      console.log(`[diag] userAchievements uid=${maskId(targetUid)} docs=${ua.size}`);
+      for (const d of ua.docs) {
+        const x = d.data();
+        console.log(
+          `[diag] achievement ${d.id} progress=${String(x.progress ?? '')} ` +
+            `unlocked=${String(x.unlocked ?? x.claimed ?? '')}`,
+        );
+      }
+    }
+
+    // 6) Stats de perfil (users/{uid}.stats — escritas pelo runner).
+    const userDoc = await db.doc(`users/${targetUid}`).get();
+    const stats = userDoc.get('stats');
     console.log(
-      `[diag] profile uid=${maskId(targetUid)} exists=${prof.exists} ` +
-        `RAW=${prof.exists ? JSON.stringify(maskDeep(prof.data())) : '-'}`,
+      `[diag] users/${maskId(targetUid)} exists=${userDoc.exists} ` +
+        `stats=${userDoc.exists ? JSON.stringify(maskDeep(stats ?? null)) : '-'}`,
     );
 
-    // 7) tempGrants do uid.
+    // 7) tempGrants (coleção TOP-LEVEL, indexada por uid).
     const tg = await db
-      .collection(`power/${targetUid}/grants`)
+      .collection('tempGrants')
+      .where('uid', '==', targetUid)
       .orderBy('expiresAt', 'desc')
       .limit(5)
       .get()
       .catch(() => null);
     if (tg) {
-      console.log(`[diag] grants uid=${maskId(targetUid)} docs=${tg.size}`);
+      console.log(`[diag] tempGrants uid=${maskId(targetUid)} docs=${tg.size}`);
       for (const d of tg.docs) {
         const x = d.data();
         console.log(
           `[diag] grant ${maskId(d.id)} powerAmount=${String(x.powerAmount ?? '')} ` +
-            `acquiredAt=${ts(x.acquiredAt)} expiresAt=${ts(x.expiresAt)} expired=${String(x.expired ?? '')}`,
+            `gameId=${String(x.gameId ?? '')} acquiredAt=${ts(x.acquiredAt)} ` +
+            `expiresAt=${ts(x.expiresAt)} expired=${String(x.expired ?? '')}`,
         );
       }
     }

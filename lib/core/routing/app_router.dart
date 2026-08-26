@@ -13,6 +13,8 @@ import '../../features/home/home_screen.dart';
 import '../../features/leagues/leagues_screen.dart';
 import '../../features/missions/missions_screen.dart';
 import '../../features/mining/mining_screen.dart';
+import '../../features/profile/account_screen.dart';
+import '../../features/profile/history_screen.dart';
 import '../../features/profile/profile_screen.dart';
 import '../../features/season_pass/season_screen.dart';
 import '../../features/wallet/wallet_screen.dart';
@@ -40,6 +42,8 @@ abstract final class RoutePaths {
   // Telas empurradas a partir das abas (fora da shell, mas autenticadas).
   static const String wallet = '/wallet';
   static const String settings = '/app/settings';
+  static const String account = '/app/account';
+  static const String history = '/app/history';
   static const String missions = '/app/missions';
   static const String achievements = '/app/achievements';
   static const String leagues = '/leagues';
@@ -100,6 +104,14 @@ GoRouter createAppRouter({AuthServiceApi? auth, String? initialLocation}) {
       GoRoute(
         path: RoutePaths.settings,
         builder: (_, _) => const SettingsScreen(),
+      ),
+      GoRoute(
+        path: RoutePaths.account,
+        builder: (_, _) => const AccountScreen(),
+      ),
+      GoRoute(
+        path: RoutePaths.history,
+        builder: (_, _) => const HistoryScreen(),
       ),
       GoRoute(
         path: RoutePaths.missions,

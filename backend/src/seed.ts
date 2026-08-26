@@ -284,15 +284,25 @@ const LEAGUES: Record<string, Record<string, unknown>> = {
 };
 
 /** Trilhas do passe (níveis 1..20) — recompensas em coins (× 1e6 = units). */
-function seasonTrack(baseCoins: number, stepCoins: number): Record<string, unknown>[] {
-  return Array.from({ length: 20 }, (_, i) => ({
+function seasonTrack(coinsByLevel: number[]): Record<string, unknown>[] {
+  return coinsByLevel.map((coins, i) => ({
     level: i + 1,
     reward: {
       type: 'coins',
-      amountUnits: (baseCoins + stepCoins * i) * 1_000_000,
+      amountUnits: coins * 1_000_000,
     },
   }));
 }
+
+/** Valores OFICIAIS da TEMPORADA 01 (v2) — COIN por nível 1..20. */
+const SEASON_FREE_COINS = [
+  50, 75, 100, 125, 150, 175, 200, 225, 250, 300,
+  350, 400, 450, 500, 600, 700, 800, 900, 1000, 1200,
+];
+const SEASON_PREMIUM_COINS = [
+  100, 150, 200, 250, 300, 350, 400, 450, 500, 600,
+  700, 800, 900, 1000, 1200, 1400, 1600, 1800, 2000, 2500,
+];
 
 /**
  * TEMPORADA 01 — seasons/season-01 (create-if-absent). XP real calculado
@@ -310,10 +320,10 @@ function seasonDoc(): Record<string, unknown> {
     xpConfig: { matchScoreDivisor: 10, missionClaimXp: 50, achievementXp: 100 },
     levelXp: 1200,
     tracks: {
-      free: seasonTrack(100, 50),
-      premium: seasonTrack(500, 150),
+      free: seasonTrack(SEASON_FREE_COINS),
+      premium: seasonTrack(SEASON_PREMIUM_COINS),
     },
-    version: 1,
+    version: 2,
   };
 }
 
@@ -634,6 +644,48 @@ async function upgradeEconomyBlockRewardV2(
   return 'upgraded';
 }
 
+/**
+ * Upgrade IDEMPOTENTE das trilhas da TEMPORADA 01 para os valores OFICIAIS
+ * (v2): doc ausente => tratado pelo createIfMissing (já nasce em v2);
+ * version >= 2 E nenhuma recompensa zerada => no-op; caso contrário
+ * (valores 0 OU version < 2) => MERGE de tracks + version+1. Nunca remove
+ * startAt/endAt/xpConfig/levelXp. Rodar novamente = no-op.
+ */
+async function upgradeSeasonTracksV2(
+  db: ReturnType<typeof initAdmin>['db'],
+): Promise<'upgraded' | 'current'> {
+  const ref = db.doc('seasons/season-01');
+  const snap = await ref.get();
+  if (!snap.exists) return 'current'; // createIfMissing grava já em v2
+  const data = (snap.data() ?? {}) as Record<string, unknown>;
+  const version = typeof data.version === 'number' ? Number(data.version) : 1;
+  const tracks = (data.tracks ?? {}) as Record<string, unknown>;
+  const hasZero = [tracks['free'], tracks['premium']].some((track) =>
+    Array.isArray(track)
+      ? track.some(
+          (entry) =>
+            Number(
+              ((entry as Record<string, unknown> | null)?.reward as
+                | Record<string, unknown>
+                | null)?.amountUnits ?? 0,
+            ) === 0
+        )
+      : true,
+  );
+  if (version >= 2 && !hasZero) return 'current';
+  await ref.set(
+    {
+      tracks: {
+        free: seasonTrack(SEASON_FREE_COINS),
+        premium: seasonTrack(SEASON_PREMIUM_COINS),
+      },
+      version: Math.max(version, 2),
+    },
+    { merge: true },
+  );
+  return 'upgraded';
+}
+
 async function upgradePayoutsToV4(
   db: ReturnType<typeof initAdmin>['db'],
 ): Promise<'created' | 'upgraded' | 'current'> {
@@ -682,6 +734,7 @@ async function main(): Promise<void> {
   console.log(`[seed] config/payouts (v4): ${await upgradePayoutsToV4(db)}`);
   console.log(`[seed] config/ads (v1): ${await createIfMissing(db, 'config/ads', ADS_V1)}`);
   console.log(`[seed] seasons/season-01: ${await createIfMissing(db, 'seasons/season-01', seasonDoc())}`);
+  console.log(`[seed] seasons/season-01 tracks (v2): ${await upgradeSeasonTracksV2(db)}`);
   for (const [id, data] of Object.entries(SEASON_MISSIONS)) {
     console.log(`[seed] missions/${id} (season): ${await createIfMissing(db, `missions/${id}`, data)}`);
   }
