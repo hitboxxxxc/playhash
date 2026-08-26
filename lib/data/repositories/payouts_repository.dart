@@ -322,27 +322,64 @@ class PayoutsRepository implements PayoutsRepositoryApi {
       });
 
   @override
-  Stream<List<WithdrawalModel>> watchUserWithdrawals(String uid) => _db
-          .collection(Collections.withdrawals)
-          .where('uid', isEqualTo: uid)
-          .orderBy('createdAt', descending: true)
-          .limit(50)
-          .snapshots()
-          .map((QuerySnapshot<Map<String, dynamic>> snap) => snap.docs
-              .map((QueryDocumentSnapshot<Map<String, dynamic>> d) =>
-                  WithdrawalModel.fromMap(d.id, d.data()))
-              .toList(growable: false))
-          .handleError((_) => const <WithdrawalModel>[]);
+  Stream<List<WithdrawalModel>> watchUserWithdrawals(String uid) {
+    // Queries SEM orderBy (evita índice composto). Ordenação na memória.
+    return _db.collection(Collections.withdrawals)
+        .where('uid', isEqualTo: uid)
+        .limit(50)
+        .snapshots()
+        .map((QuerySnapshot<Map<String, dynamic>> snap) {
+      final List<WithdrawalModel> raw = snap.docs
+          .map((d) => WithdrawalModel.fromMap(d.id, d.data()))
+          .toList(growable: false);
+
+      // Ordenação na memória por createdAt desc (evita índice composto).
+      raw.sort((a, b) {
+        final DateTime da = a.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+        final DateTime db = b.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+        return db.compareTo(da);
+      });
+
+      // Deduplicação por createdAt + status (mesma entrada duplicada).
+      final List<WithdrawalModel> deduped = <WithdrawalModel>[];
+      for (final w in raw) {
+        if (!deduped.any((existing) =>
+            existing.createdAt == w.createdAt && existing.status == w.status)) {
+          deduped.add(w);
+        }
+      }
+
+      return deduped;
+    }).handleError((_) => const <WithdrawalModel>[]);
+  }
 
   @override
-  Stream<List<RewardHistoryEntry>> watchRewardItems(String uid) => _db
-          .collection('${Collections.rewards}/$uid/items')
-          .orderBy('createdAt', descending: true)
-          .limit(50)
-          .snapshots()
-          .map((QuerySnapshot<Map<String, dynamic>> snap) => snap.docs
-              .map((QueryDocumentSnapshot<Map<String, dynamic>> d) =>
-                  RewardHistoryEntry.fromMap(d.id, d.data()))
-              .toList(growable: false))
-          .handleError((_) => const <RewardHistoryEntry>[]);
+  Stream<List<RewardHistoryEntry>> watchRewardItems(String uid) {
+    // Queries SEM orderBy (evita índice composto). Ordenação na memória.
+    return _db.collection('${Collections.rewards}/$uid/items')
+        .limit(50)
+        .snapshots()
+        .map((QuerySnapshot<Map<String, dynamic>> snap) {
+      final List<RewardHistoryEntry> raw = snap.docs
+          .map((d) => RewardHistoryEntry.fromMap(d.id, d.data()))
+          .toList(growable: false);
+
+      // Ordenação na memória por createdAt desc (evita índice composto).
+      raw.sort((a, b) {
+        final DateTime da = a.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+        final DateTime db = b.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+        return db.compareTo(da);
+      });
+
+      // Deduplicação por referenceId (mesma recompensa duplicada).
+      final List<RewardHistoryEntry> deduped = <RewardHistoryEntry>[];
+      for (final r in raw) {
+        if (!deduped.any((existing) => existing.referenceId == r.referenceId)) {
+          deduped.add(r);
+        }
+      }
+
+      return deduped;
+    }).handleError((_) => const <RewardHistoryEntry>[]);
+  }
 }

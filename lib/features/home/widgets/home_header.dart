@@ -57,8 +57,8 @@ class HomeHeader extends StatelessWidget {
             ),
           ),
         ),
-        const SizedBox(width: 12),
-        Expanded(
+        const SizedBox(width: 4),
+        Flexible(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
@@ -79,7 +79,7 @@ class HomeHeader extends StatelessWidget {
             ],
           ),
         ),
-        const SizedBox(width: 8),
+
         // Flexible: o chip encolhe (com ellipsis) em telas estreitas.
         Flexible(
           child: _BalanceChip(
@@ -88,17 +88,13 @@ class HomeHeader extends StatelessWidget {
             onAddTap: onAddTap,
           ),
         ),
-        const SizedBox(width: 6),
+
+        const SizedBox(width: 4),
+
         _HeaderShortcut(
           icon: NeonIcons.bell,
           tooltip: 'Notificações',
           onTap: onNotificationsTap,
-        ),
-        const SizedBox(width: 6),
-        _HeaderShortcut(
-          icon: NeonIcons.gear,
-          tooltip: 'Configurações',
-          onTap: onSettingsTap,
         ),
       ],
     );
@@ -121,7 +117,7 @@ class _BalanceChip extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       height: 48,
-      padding: const EdgeInsets.only(left: 12, right: 4),
+      padding: const EdgeInsets.only(left: 4, right: 0),
       decoration: ShapeDecoration(
         color: AppColors.surface,
         shape: ChamferedBorder(
@@ -134,7 +130,7 @@ class _BalanceChip extends StatelessWidget {
         children: <Widget>[
           SvgPicture.string(
             NeonIcons.coin,
-            width: 18,
+            width: 12,
             colorFilter: const ColorFilter.mode(
               AppColors.gold,
               BlendMode.srcIn,
@@ -165,16 +161,12 @@ class _BalanceChip extends StatelessWidget {
               );
             }),
           ),
-          const SizedBox(width: 4),
-          SizedBox(
-            width: 36,
-            height: 36,
-            child: IconButton(
-              onPressed: onAddTap,
-              padding: EdgeInsets.zero,
-              icon: const Icon(Icons.add, size: 20, color: AppColors.green),
-              tooltip: 'Adicionar saldo (em breve)',
-            ),
+          // Botão "+" sem tamanho fixo — encolhe com o ícone.
+          IconButton(
+            onPressed: onAddTap,
+            padding: EdgeInsets.zero,
+            icon: const Icon(Icons.add, size: 20, color: AppColors.green),
+            tooltip: 'Adicionar saldo (em breve)',
           ),
         ],
       ),
