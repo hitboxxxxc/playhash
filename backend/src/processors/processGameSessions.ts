@@ -456,15 +456,18 @@ export async function processGameSessions(db: Firestore): Promise<ProcessingSumm
   // 'processed' na criação. Resultado: scanned=0 eterno ("FIM DE JOGO" preso em
   // "Em validação…"). Agora: filtra por status e aplica o predicado
   // processed !== true EM CÓDIGO (tolera campo ausente em docs legados).
+  // Sem orderBy composto (exigiria índice novo em produção): igualdade única
+  // usa índice automático de campo único; ordenação por finishedAt é feita
+  // EM MEMÓRIA (mais antigo primeiro — justiça FIFO no processamento).
   const snap = await db
     .collection('gameSessions')
     .where('status', '==', 'finished')
-    .orderBy('finishedAt', 'asc')
     .limit(economy.limits.maxBatchSize * 4)
     .get();
 
   const pending = snap.docs
     .filter((d) => d.get('processed') !== true)
+    .sort((a, b) => toMillisSafe(a.get('finishedAt')) - toMillisSafe(b.get('finishedAt')))
     .slice(0, economy.limits.maxBatchSize);
 
   const summary: ProcessingSummary = { scanned: pending.length, granted: 0, rejected: 0, failed: 0 };
