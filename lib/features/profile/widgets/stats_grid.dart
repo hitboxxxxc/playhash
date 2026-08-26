@@ -6,25 +6,44 @@ import '../../../core/theme/chamfered_border.dart';
 
 /// Grade de estatísticas do perfil (6 cards).
 ///
-/// IMPORTANTE: economia e partidas ainda NÃO foram implementadas. Os valores
-/// exibidos são placeholders honestos ("0" ou "—") — NUNCA números inventados.
-/// Quando o backend passar a fornecer stats reais, este widget receberá os
-/// valores por parâmetro.
+/// Valores vêm SEMPRE do backend (`users/{uid}.stats` escrito pelo runner —
+/// plays/wins/bestScore; poder total de `power/{uid}`). Parâmetro ausente =>
+/// placeholder honesto ("0" ou "—") — NUNCA número inventado.
 class StatsGrid extends StatelessWidget {
-  const StatsGrid({super.key});
+  const StatsGrid({
+    super.key,
+    this.powerTotal,
+    this.plays,
+    this.wins,
+    this.achievements,
+    this.machines,
+  });
 
-  /// (rótulo, valor) — valores são placeholders até o backend existir.
-  static const List<(String, String)> _stats = <(String, String)>[
-    ('PODER TOTAL', '0'),
-    ('PARTIDAS', '0'),
-    ('VITÓRIAS', '0'),
-    ('CONQUISTAS', '0'),
-    ('MÁQUINAS', '0'),
-    ('LIGA', '—'),
-  ];
+  /// Poder total oficial (unidades H/s inteiras) de `power/{uid}`.
+  final int? powerTotal;
+
+  /// Partidas consolidadas pelo runner (`users/{uid}.stats.plays`).
+  final int? plays;
+
+  /// Vitórias consolidadas pelo runner (`users/{uid}.stats.wins`).
+  final int? wins;
+
+  /// Conquistas com progresso (`userAchievements/{uid}/items`).
+  final int? achievements;
+
+  /// Máquinas ativas do jogador.
+  final int? machines;
 
   @override
   Widget build(BuildContext context) {
+    final List<(String, String)> stats = <(String, String)>[
+      ('PODER TOTAL', powerTotal?.toString() ?? '0'),
+      ('PARTIDAS', plays?.toString() ?? '0'),
+      ('VITÓRIAS', wins?.toString() ?? '0'),
+      ('CONQUISTAS', achievements?.toString() ?? '0'),
+      ('MÁQUINAS', machines?.toString() ?? '0'),
+      ('LIGA', '—'),
+    ];
     return GridView.count(
       crossAxisCount: 3,
       shrinkWrap: true,
@@ -33,7 +52,7 @@ class StatsGrid extends StatelessWidget {
       crossAxisSpacing: 8,
       childAspectRatio: 1.25,
       children: <Widget>[
-        for (final (String, String) stat in _stats)
+        for (final (String, String) stat in stats)
           _StatCard(label: stat.$1, value: stat.$2),
       ],
     );

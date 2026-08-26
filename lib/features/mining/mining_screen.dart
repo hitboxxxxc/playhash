@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -40,6 +42,8 @@ class _MiningScreenState extends ConsumerState<MiningScreen>
   Map<String, dynamic>? _league;
   int? _machinesPower;
 
+  StreamSubscription<BlockSnapshot?>? _blockSub;
+
   @override
   bool get wantKeepAlive => true;
 
@@ -47,6 +51,30 @@ class _MiningScreenState extends ConsumerState<MiningScreen>
   void initState() {
     super.initState();
     _load();
+    // LISTENER do bloco: quando o runner fecha um bloco, blocks/current é
+    // reescrito e o countdown/recompensa refrescam SEM recarregar a tela.
+    _blockSub = ref.read(miningRepositoryProvider).watchBlockSnapshot().listen(
+      (BlockSnapshot? block) {
+        if (!mounted || block == null) return;
+        final PowerModel? power = _power;
+        setState(() {
+          _block = block;
+          if (power != null) {
+            _estimate = ref.read(miningRepositoryProvider).estimateReward(
+                  yourPower: power.totalPower,
+                  block: block,
+                );
+          }
+        });
+      },
+      onError: (Object _) {/* mantém último snapshot válido */},
+    );
+  }
+
+  @override
+  void dispose() {
+    unawaited(_blockSub?.cancel());
+    super.dispose();
   }
 
   Future<void> _load() async {

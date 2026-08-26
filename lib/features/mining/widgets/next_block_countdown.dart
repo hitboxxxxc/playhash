@@ -38,6 +38,23 @@ class _NextBlockCountdownState extends State<NextBlockCountdown> {
     _syncSchedule();
   }
 
+  /// Intervalo NOMINAL de exibição (5 min). Usado APENAS para projetar o
+  /// próximo múltiplo quando a âncora do servidor já passou (runner ainda
+  /// não gravou o bloco novo) — a AUTORIDADE continua sendo o backend.
+  static const Duration _displayInterval = Duration(minutes: 5);
+
+  /// Próximo instante efetivo a exibir: a âncora do servidor; se já passou,
+  /// o próximo múltiplo do intervalo APÓS a âncora (nunca "00:00" preso).
+  DateTime? get _effectiveNext {
+    final DateTime? anchor = _nextBlockAt;
+    if (anchor == null) return null;
+    final DateTime now = DateTime.now();
+    if (anchor.isAfter(now)) return anchor;
+    final int lateMinutes = now.difference(anchor).inMinutes;
+    final int steps = (lateMinutes ~/ _displayInterval.inMinutes) + 1;
+    return anchor.add(_displayInterval * steps);
+  }
+
   void _syncSchedule() {
     final DateTime? next = widget.block?.nextBlockAt;
     if (next == _nextBlockAt) return;
@@ -59,7 +76,7 @@ class _NextBlockCountdownState extends State<NextBlockCountdown> {
   }
 
   String get _label {
-    final DateTime? next = _nextBlockAt;
+    final DateTime? next = _effectiveNext;
     if (next == null) return '--:--';
     Duration remaining = next.difference(DateTime.now());
     if (remaining.isNegative) remaining = Duration.zero;
@@ -71,7 +88,7 @@ class _NextBlockCountdownState extends State<NextBlockCountdown> {
 
   @override
   Widget build(BuildContext context) {
-    final bool hasSchedule = _nextBlockAt != null;
+    final bool hasSchedule = _effectiveNext != null;
 
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,

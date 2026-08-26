@@ -48,8 +48,14 @@ async function loadUserPowers(
 }
 
 /**
- * Credita rewards de um usuário. Idempotente: transactions/{txId} tem ID
- * determinístico — se já existe, o usuário é pulado.
+ * Credita rewards de um usuário — 12.25: TRANSAÇÃO ATÔMICA POR USUÁRIO.
+ *
+ * O código anterior usava batch.set(wallet, {availableBalance: reward},
+ * {merge:true}) que SOBRESCREVIA o saldo (perda de saldo prévio!). Agora cada
+ * crédito é uma transação read-modify-write com BigInt que cria
+ * transactions/{txId} (id determinístico periodKey+uid ⇒ idempotente),
+ * SOMA availableBalance E lifetimeEarned, grava auditoria e o espelho de
+ * histórico — tudo na MESMA transação (tudo-ou-nada por usuário).
  */
 async function creditUsers(
   db: Firestore,
@@ -58,87 +64,73 @@ async function creditUsers(
   currencyId: string,
   ruleVersion: number,
 ): Promise<number> {
-  const uids = [...rewards.keys()];
-  const alreadyCredited = new Set<string>();
-  // Verifica transações já gravadas para este bloco (crash-recovery).
-  for (let i = 0; i < uids.length; i += 100) {
-    const chunk = uids.slice(i, i + 100);
-    const snap = await db.getAll(
-      ...chunk.map((uid) => db.doc(`transactions/${txIdFor(periodKey, uid)}`)),
-    );
-    for (const d of snap) if (d.exists) alreadyCredited.add(d.id);
-  }
-
   let credited = 0;
-  const serverTs = FieldValue.serverTimestamp();
-  let batch = db.batch();
-  let ops = 0;
-
-  const flush = async () => {
-    if (ops > 0) await batch.commit();
-    batch = db.batch();
-    ops = 0;
-  };
 
   for (const [uid, reward] of [...rewards.entries()].sort()) {
-    const txRef = db.doc(`transactions/${txIdFor(periodKey, uid)}`);
-    if (alreadyCredited.has(txRef.id)) continue;
+    const txId = txIdFor(periodKey, uid);
+    const txRef = db.doc(`transactions/${txId}`);
+    const auditId = auditEventId('REWARD_CREDITED', `${periodKey}:${uid}`);
 
-    batch.create(txRef, {
-      userId: uid,
-      type: 'REWARD_BLOCK',
-      amount: reward.toString(),
-      currencyId,
-      source: 'block',
-      timestamp: serverTs,
-      referenceId: periodKey,
-      ruleVersion,
-      status: 'COMPLETED',
+    await db.runTransaction(async (tx) => {
+      const existing = await tx.get(txRef);
+      if (existing.exists) return; // já creditado neste bloco (idempotente)
+
+      const walletRef = db.doc(`wallets/${uid}`);
+      const walletSnap = await tx.get(walletRef);
+      const balance = toInt((walletSnap.get('availableBalance') ?? 0) as number | string);
+      const lifetime = toInt((walletSnap.get('lifetimeEarned') ?? 0) as number | string);
+
+      tx.create(txRef, {
+        userId: uid,
+        type: 'REWARD_BLOCK',
+        amount: reward.toString(),
+        currencyId,
+        source: 'block',
+        timestamp: FieldValue.serverTimestamp(),
+        referenceId: periodKey,
+        ruleVersion,
+        status: 'COMPLETED',
+      });
+
+      // SOMA atômica (12.25) — nunca sobrescreve saldo/lifetime existentes.
+      tx.set(
+        walletRef,
+        {
+          uid,
+          availableBalance: (balance + reward).toString(),
+          lifetimeEarned: (lifetime + reward).toString(),
+          updatedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
+
+      // Auditoria por crédito (append-only, id determinístico).
+      tx.create(db.collection('auditLogs').doc(auditId), {
+        eventId: auditId,
+        userId: uid,
+        type: 'REWARD_CREDITED',
+        valueUnits: reward.toString(),
+        currencyId,
+        referenceId: periodKey,
+        origin: 'runner.closeBlocks',
+        ruleVersion,
+        status: 'SUCCESS',
+        timestamp: FieldValue.serverTimestamp(),
+      });
+
+      // Espelho do histórico no app (rewards/{uid}/items/BLOCK_{periodKey}):
+      // leitura owner nas rules; escrita exclusiva do Admin SDK. Id
+      // determinístico ⇒ reexecução do bloco não duplica entrada visível.
+      tx.set(db.doc(`rewards/${uid}/items/BLOCK_${periodKey}`), {
+        type: 'REWARD_BLOCK',
+        amount: reward.toString(),
+        currencyId,
+        createdAt: FieldValue.serverTimestamp(),
+        referenceId: periodKey,
+      });
     });
-    ops += 1;
-
-    batch.set(
-      db.doc(`wallets/${uid}`),
-      {
-        uid,
-        availableBalance: reward.toString(),
-        lifetimeEarned: reward.toString(),
-        updatedAt: serverTs,
-      },
-      { merge: true },
-    );
-    ops += 1;
-
-    // Auditoria por crédito usa FieldValue direto no doc (append-only).
-    batch.create(db.collection('auditLogs').doc(auditEventId('REWARD_CREDITED', `${periodKey}:${uid}`)), {
-      eventId: auditEventId('REWARD_CREDITED', `${periodKey}:${uid}`),
-      userId: uid,
-      type: 'REWARD_CREDITED',
-      valueUnits: reward.toString(),
-      currencyId,
-      referenceId: periodKey,
-      origin: 'runner.closeBlocks',
-      ruleVersion,
-      status: 'SUCCESS',
-      timestamp: serverTs,
-    });
-
-    // Espelho do histórico no app (rewards/{uid}/items/BLOCK_{periodKey}):
-    // leitura owner nas rules; escrita exclusiva do Admin SDK. Id
-    // determinístico ⇒ reexecução do bloco não duplica entrada visível.
-    batch.set(db.doc(`rewards/${uid}/items/BLOCK_${periodKey}`), {
-      type: 'REWARD_BLOCK',
-      amount: reward.toString(),
-      currencyId,
-      createdAt: serverTs,
-      referenceId: periodKey,
-    });
-    ops += 5;
-
     credited += 1;
-    if (ops >= 480) await flush(); // limite de 500 ops/batch
   }
-  await flush();
   return credited;
 }
 

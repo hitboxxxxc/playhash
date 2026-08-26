@@ -113,6 +113,11 @@ abstract interface class MiningRepositoryApi {
   /// Qualquer falha (doc ausente, permissão, offline sem cache) => `null`.
   Future<BlockSnapshot?> loadBlockSnapshot();
 
+  /// Observa `blocks/current` em TEMPO REAL: quando o runner fecha um bloco,
+  /// o espelho público é reescrito e a UI (countdown/recompensa) refresca
+  /// sem recarregar a tela. Erro de permissão/rede => stream com `null`.
+  Stream<BlockSnapshot?> watchBlockSnapshot();
+
   /// Histórico de recompensas (`rewards/{uid}/items`). Falha => lista vazia.
   Future<List<RewardEntry>> loadRewardHistory(String uid);
 
@@ -166,6 +171,18 @@ class MiningRepository implements MiningRepositoryApi {
       );
     } catch (_) {
       return null; // backend de blocos ausente => estado vazio
+    }
+  }
+
+  @override
+  Stream<BlockSnapshot?> watchBlockSnapshot() {
+    try {
+      return _db.collection(Collections.blocks).doc('current').snapshots().map(
+            (DocumentSnapshot<Map<String, dynamic>> snap) =>
+                snap.exists ? BlockSnapshot.fromMap(snap.data()!) : null,
+          );
+    } catch (_) {
+      return const Stream<BlockSnapshot?>.empty(); // backend ausente => nada
     }
   }
 

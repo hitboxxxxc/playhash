@@ -86,12 +86,25 @@ class ProfileScreen extends ConsumerWidget {
     );
   }
 
+  /// Converte campo numérico tolerante (int/num/string) com segurança.
+  static int? _parseInt(Object? raw) {
+    if (raw is int) return raw;
+    if (raw is num) return raw.toInt();
+    if (raw is String) return int.tryParse(raw);
+    return null;
+  }
+
   Widget _buildContent(
     BuildContext context,
     WidgetRef ref,
     Map<String, dynamic>? doc,
   ) {
     final Object? createdAt = doc?['createdAt'];
+    // Stats OFICIAIS gravadas pelo runner em users/{uid}.stats (plays/wins/
+    // bestScore). Ausentes => placeholders honestos na grade.
+    final Object? statsRaw = doc?['stats'];
+    final Map<String, dynamic> stats =
+        statsRaw is Map<String, dynamic> ? statsRaw : const <String, dynamic>{};
 
     return ListView(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
@@ -110,7 +123,10 @@ class ProfileScreen extends ConsumerWidget {
           ),
         ),
         const SizedBox(height: 8),
-        const StatsGrid(),
+        StatsGrid(
+          plays: _parseInt(stats['plays']),
+          wins: _parseInt(stats['wins']),
+        ),
         const SizedBox(height: 16),
         ProfileMenuList(
           onItemTap: (ProfileMenuOption option) =>

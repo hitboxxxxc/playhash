@@ -368,6 +368,27 @@ async function handleSession(
       await bumpAchievementProgress(db, uid, 'max_score', 'max', finalScore);
       if (kills > 0) await bumpAchievementProgress(db, uid, 'kills', 'add', kills);
       await incrementDailyCounter(db, uid, 'sessions', nowMs);
+
+      // Stats de perfil (partidas/vitórias/bestScore por game). "Vitória" =
+      // objetivo do game atingido (breakdown.flagReached); games sem flag
+      // (nova-swarm) não contam vitória. Falha aqui NUNCA invalida o grant.
+      try {
+        const wonFlag =
+          data.breakdown !== null &&
+          typeof data.breakdown === 'object' &&
+          (data.breakdown as Record<string, unknown>).flagReached === true;
+        await bumpProfileStats(
+          db,
+          uid,
+          typeof data.gameId === 'string' ? data.gameId : 'unknown',
+          finalScore,
+          wonFlag,
+        );
+      } catch (statsErr) {
+        console.error(
+          `[processGameSessions] session=${sessionId} profileStats failed: ${sanitize(statsErr)}`,
+        );
+      }
     }
     return 'granted';
   } catch (err) {
@@ -390,21 +411,64 @@ function sanitize(err: unknown): string {
   return String((err as Error)?.message ?? err).slice(0, 300);
 }
 
+/**
+ * Atualiza stats de perfil (users/{uid}.stats): partidas, vitórias e bestScore
+ * por game. Transação por uid (read-modify-write) — chamado SOMENTE quando o
+ * grant foi criado (guarda de idempotência por sessionId).
+ */
+async function bumpProfileStats(
+  db: Firestore,
+  uid: string,
+  gameId: string,
+  finalScore: number,
+  won: boolean,
+): Promise<void> {
+  await db.runTransaction(async (tx) => {
+    const ref = db.doc(`users/${uid}`);
+    const snap = await tx.get(ref);
+    const stats = (snap.get('stats') as Record<string, unknown> | undefined) ?? {};
+    const bestRaw = (stats.bestScore as Record<string, unknown> | undefined) ?? {};
+    const prevBest = Number(bestRaw[gameId] ?? 0);
+    tx.set(
+      ref,
+      {
+        stats: {
+          ...stats,
+          plays: Number(stats.plays ?? 0) + 1,
+          ...(won ? { wins: Number(stats.wins ?? 0) + 1 } : {}),
+          bestScore: { ...bestRaw, [gameId]: Math.max(prevBest, finalScore) },
+          lastPlayedAt: FieldValue.serverTimestamp(),
+        },
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true },
+    );
+  });
+}
+
 /** Ponto de entrada do runner. */
 export async function processGameSessions(db: Firestore): Promise<ProcessingSummary> {
   const economy = await getEconomyConfig(db);
   const nowMs = Date.now(); // tempo SOMENTE do servidor
 
+  // FIX (runner mudo): a query antiga usava where('processed','==',false), que
+  // NUNCA casa com docs sem o campo — e as rules PROÍBEM o cliente de gravar
+  // 'processed' na criação. Resultado: scanned=0 eterno ("FIM DE JOGO" preso em
+  // "Em validação…"). Agora: filtra por status e aplica o predicado
+  // processed !== true EM CÓDIGO (tolera campo ausente em docs legados).
   const snap = await db
     .collection('gameSessions')
     .where('status', '==', 'finished')
-    .where('processed', '==', false)
     .orderBy('finishedAt', 'asc')
-    .limit(economy.limits.maxBatchSize)
+    .limit(economy.limits.maxBatchSize * 4)
     .get();
 
-  const summary: ProcessingSummary = { scanned: snap.size, granted: 0, rejected: 0, failed: 0 };
-  for (const doc of snap.docs) {
+  const pending = snap.docs
+    .filter((d) => d.get('processed') !== true)
+    .slice(0, economy.limits.maxBatchSize);
+
+  const summary: ProcessingSummary = { scanned: pending.length, granted: 0, rejected: 0, failed: 0 };
+  for (const doc of pending) {
     const outcome = await handleSession(db, economy, doc, nowMs);
     summary[outcome] += 1;
   }

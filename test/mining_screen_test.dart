@@ -73,6 +73,10 @@ class _FakeMiningRepository implements MiningRepositoryApi {
   Future<BlockSnapshot?> loadBlockSnapshot() async => block;
 
   @override
+  Stream<BlockSnapshot?> watchBlockSnapshot() =>
+      Stream<BlockSnapshot?>.value(block);
+
+  @override
   Future<List<RewardEntry>> loadRewardHistory(String uid) async => history;
 
   @override
