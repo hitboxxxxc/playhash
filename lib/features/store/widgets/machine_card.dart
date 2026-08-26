@@ -11,8 +11,13 @@ import '../../../data/models/machine_catalog_model.dart';
 
 /// Card do catálogo de máquinas: sprite pixel próprio por raridade, nome,
 /// +X H/s (power_format), preço dourado (coin_format), chip de raridade e
-/// "owned x/max". Botão COMPRAR chanfrado ciano — desabilitado se limite
-/// atingido ou saldo insuficiente (aviso discreto, preço sempre visível).
+/// "x/max" com Tooltip (palavra "owned" removida para não truncar em telas
+/// estreitas). Botão COMPRAR chanfrado ciano — desabilitado se limite
+/// atingido ou saldo insuficiente (aviso discreto em LINHA PRÓPRIA abaixo
+/// do botão, nunca sobreposto; preço sempre visível).
+///
+/// Layout SEM altura fixa que estoure: paddings compactos e conteúdo
+/// vertical flexível — cabe em tiles de ~134dp de largura (tela 320dp).
 class MachineCard extends StatelessWidget {
   const MachineCard({
     super.key,
@@ -47,15 +52,22 @@ class MachineCard extends StatelessWidget {
               RarityChip(rarity: machine.rarity),
               const Spacer(),
               if (machine.maxPerUser > 0)
+                // "x/max" curto + significado completo no Tooltip (nada
+                // truncado em telas estreitas). Flexible ⇒ nunca estoura a
+                // Row do chip de raridade.
                 Flexible(
-                  child: Text(
-                    'owned $ownedCount/${machine.maxPerUser}',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 10,
-                      letterSpacing: 0.5,
-                      color: AppColors.textSecondary,
+                  child: Tooltip(
+                    message: 'Você possui $ownedCount de '
+                        '${machine.maxPerUser} desta máquina',
+                    child: Text(
+                      '$ownedCount/${machine.maxPerUser}',
+                      maxLines: 1,
+                      overflow: TextOverflow.fade,
+                      style: const TextStyle(
+                        fontSize: 10,
+                        letterSpacing: 0.5,
+                        color: AppColors.textSecondary,
+                      ),
                     ),
                   ),
                 ),
@@ -66,10 +78,10 @@ class MachineCard extends StatelessWidget {
             onTap: onOpenDetails,
             behavior: HitTestBehavior.opaque,
             child: Center(
-              child: MachineSprite(rarity: machine.rarity, size: 84),
+              child: MachineSprite(rarity: machine.rarity, size: 72),
             ),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 6),
           Text(
             machine.name.toUpperCase(),
             maxLines: 1,
@@ -91,18 +103,24 @@ class MachineCard extends StatelessWidget {
               children: <Widget>[
                 Icon(Icons.bolt, size: 14, color: accent),
                 const SizedBox(width: 4),
-                Text(
-                  '+${PowerFormat.format(machine.powerUnits)}',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    color: accent,
+                // Flexible ⇒ texto longo nunca estoura o card em telas
+                // estreitas (320dp) — encolhe com fade antes de transbordar.
+                Flexible(
+                  child: Text(
+                    '+${PowerFormat.format(machine.powerUnits)}',
+                    maxLines: 1,
+                    overflow: TextOverflow.fade,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: accent,
+                    ),
                   ),
                 ),
               ],
             ),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 6),
           // Preço SEMPRE visível (mesmo sem saldo).
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -116,19 +134,24 @@ class MachineCard extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 5),
-              Text(
-                CoinFormat.formatMinimalUnits(machine.priceUnits),
-                style: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w800,
-                  color: AppColors.gold,
+              // Flexible ⇒ preço com muitos dígitos nunca estoura o card.
+              Flexible(
+                child: Text(
+                  CoinFormat.formatMinimalUnits(machine.priceUnits),
+                  maxLines: 1,
+                  overflow: TextOverflow.fade,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                    color: AppColors.gold,
+                  ),
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 8),
           SizedBox(
-            height: 40,
+            height: 36,
             child: DecoratedBox(
               decoration: ShapeDecoration(
                 shape: ChamferedBorder(
@@ -200,7 +223,7 @@ class NeonPanelLike extends StatelessWidget {
           side: BorderSide(color: accent.withValues(alpha: 0.45)),
         ),
       ),
-      child: Padding(padding: const EdgeInsets.all(14), child: child),
+      child: Padding(padding: const EdgeInsets.all(10), child: child),
     );
   }
 }

@@ -158,9 +158,39 @@ void main() {
     expect(find.text('COMUM'), findsOneWidget);
     expect(find.text('LENDÁRIO'), findsOneWidget);
 
-    // owned x/max.
-    expect(find.text('owned 0/5'), findsOneWidget);
-    expect(find.text('owned 0/1'), findsOneWidget);
+    // "x/max" compacto (sem a palavra "owned" — nada truncado).
+    expect(find.text('0/5'), findsOneWidget);
+    expect(find.text('0/1'), findsOneWidget);
+  });
+
+  testWidgets('LOJA em tela estreita (320dp): cards sem overflow',
+      (WidgetTester tester) async {
+    await tester.binding.setSurfaceSize(const Size(320, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          authServiceProvider.overrideWithValue(
+            _FakeAuthService(user: _FakeUser()),
+          ),
+          machineCatalogRepositoryProvider
+              .overrideWithValue(_FakeCatalogRepository(kFakeCatalog)),
+          walletRepositoryProvider.overrideWithValue(
+            _FakeWalletRepository(null), // aviso "Saldo insuficiente" visível
+          ),
+          machinesRepositoryProvider
+              .overrideWithValue(_FakeMachinesRepository(const [])),
+        ],
+        child: const MaterialApp(home: StoreScreen()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Nenhum erro de layout (BOTTOM OVERFLOWED) nos tiles.
+    expect(tester.takeException(), isNull);
+    expect(find.text('COMPRAR'), findsNWidgets(2));
+    expect(find.text('Saldo insuficiente'), findsNWidgets(2));
   });
 
   testWidgets('LOJA: saldo insuficiente desabilita COMPRAR sem esconder preço',
@@ -218,7 +248,7 @@ void main() {
       ]),
     );
 
-    expect(find.text('owned 1/1'), findsOneWidget);
+    expect(find.text('1/1'), findsOneWidget);
     expect(find.text('Limite atingido'), findsOneWidget);
     // RIG SCRAP continua comprável (saldo suficiente, sem limite atingido).
     final Finder buyButtons = find.ancestor(

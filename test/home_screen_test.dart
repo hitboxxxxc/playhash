@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:firebase_auth/firebase_auth.dart' show User;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -9,6 +11,8 @@ import 'package:playhash/data/models/power_model.dart';
 import 'package:playhash/data/models/wallet_model.dart';
 import 'package:playhash/data/repositories/economy_repository.dart';
 import 'package:playhash/data/repositories/machines_repository.dart';
+import 'package:playhash/core/widgets/next_block_countdown.dart';
+import 'package:playhash/data/repositories/mining_repository.dart';
 import 'package:playhash/data/repositories/power_repository.dart';
 import 'package:playhash/data/repositories/profile_repository.dart';
 import 'package:playhash/data/repositories/wallet_repository.dart';
@@ -86,13 +90,20 @@ class _FakeMachinesRepository implements MachinesRepositoryApi {
   _FakeMachinesRepository(this.machines);
 
   List<MachineModel> machines;
+  final StreamController<List<MachineModel>> _controller =
+      StreamController<List<MachineModel>>.broadcast();
+
+  /// Simula o runner aprovando uma compra: novo item entra na stream.
+  void emit(List<MachineModel> value) {
+    machines = value;
+    _controller.add(value);
+  }
 
   @override
   Future<List<MachineModel>> loadMachines(String uid) async => machines;
 
   @override
-  Stream<List<MachineModel>> watchMachines(String uid) =>
-      Stream<List<MachineModel>>.value(machines);
+  Stream<List<MachineModel>> watchMachines(String uid) => _controller.stream;
 }
 
 class _FakeEconomyRepository implements EconomyRepositoryApi {
@@ -104,6 +115,49 @@ class _FakeEconomyRepository implements EconomyRepositoryApi {
   Future<int?> loadMachineSlots() async => machineSlots;
 }
 
+class _FakeMiningRepository implements MiningRepositoryApi {
+  _FakeMiningRepository([BlockSnapshot? block])
+      : _controller = StreamController<BlockSnapshot?>.broadcast() {
+    if (block != null) {
+      this.block = block;
+      _controller.add(block);
+    }
+  }
+
+  BlockSnapshot? block;
+  final StreamController<BlockSnapshot?> _controller;
+
+  /// Simula o runner regravando `blocks/current` (bloco fechado).
+  void emit(BlockSnapshot? value) {
+    block = value;
+    _controller.add(value);
+  }
+
+  @override
+  Future<BlockSnapshot?> loadBlockSnapshot() async => block;
+
+  /// Replay do valor atual + updates (broadcast perde eventos sem listener).
+  @override
+  Stream<BlockSnapshot?> watchBlockSnapshot() async* {
+    yield block;
+    yield* _controller.stream;
+  }
+
+  @override
+  Future<List<RewardEntry>> loadRewardHistory(String uid) async =>
+      const <RewardEntry>[];
+
+  @override
+  Future<Map<String, dynamic>?> loadUserLeague(String uid) async => null;
+
+  @override
+  RewardEstimate? estimateReward({
+    required int yourPower,
+    BlockSnapshot? block,
+  }) =>
+      null;
+}
+
 Future<void> _pumpHome(
   WidgetTester tester, {
   required _FakeAuthService auth,
@@ -112,6 +166,7 @@ Future<void> _pumpHome(
   required _FakePowerRepository powerRepo,
   required _FakeMachinesRepository machinesRepo,
   _FakeEconomyRepository? economyRepo,
+  _FakeMiningRepository? miningRepo,
 }) async {
   await tester.binding.setSurfaceSize(const Size(800, 2400));
   addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -126,6 +181,8 @@ Future<void> _pumpHome(
         machinesRepositoryProvider.overrideWithValue(machinesRepo),
         economyRepositoryProvider
             .overrideWithValue(economyRepo ?? _FakeEconomyRepository(10)),
+        miningRepositoryProvider
+            .overrideWithValue(miningRepo ?? _FakeMiningRepository(null)),
       ],
       child: const MaterialApp(home: HomeScreen()),
     ),
@@ -165,7 +222,8 @@ void main() {
     // Card de poder estrutural.
     expect(find.text('MEU PODER'), findsOneWidget);
     expect(find.text('Multiplicador: —'), findsOneWidget);
-    expect(find.textContaining('Próxima recompensa em'), findsOneWidget);
+    // Sem schedule do backend => traços (nunca horário inventado).
+    expect(find.textContaining('Próxima recompensa em --:--'), findsOneWidget);
 
     // Sala de máquinas: 2 prateleiras × 5 slots, todos VAZIOS ("+")
     // (machineSlots = 10; nada travado).
@@ -224,6 +282,75 @@ void main() {
     // 1 máquina => 9 slots vazios, nenhum travado.
     expect(_emptySlots, findsNWidgets(9));
     expect(_lockedSlots, findsNothing);
+  });
+
+  testWidgets('HOME: countdown "Próxima recompensa em" usa o MESMO widget '
+      'compartilhado da MINERAÇÃO e refresca com o schedule do backend',
+      (WidgetTester tester) async {
+    final _FakeMiningRepository miningRepo = _FakeMiningRepository(
+      BlockSnapshot(nextBlockAt: DateTime.now().add(const Duration(minutes: 5))),
+    );
+    await _pumpHome(
+      tester,
+      auth: _FakeAuthService(user: _FakeUser()),
+      profileRepo: _FakeProfileRepository(null),
+      walletRepo: _FakeWalletRepository(null),
+      powerRepo: _FakePowerRepository(null),
+      machinesRepo: _FakeMachinesRepository(const <MachineModel>[]),
+      miningRepo: miningRepo,
+    );
+
+    // Com schedule oficial: mm:ss visível (nada de "--:--"/"—").
+    final Finder countdownLine = find.byWidgetPredicate(
+      (Widget w) =>
+          w is Text &&
+          RegExp(r'^Próxima recompensa em \d{2}:\d{2}$').hasMatch(w.data ?? ''),
+    );
+    expect(countdownLine, findsOneWidget);
+    expect(find.byType(NextBlockCountdown), findsOneWidget);
+
+    // Runner regrava `blocks/current` => rótulo refresca SEM recarregar.
+    miningRepo.emit(
+      BlockSnapshot(nextBlockAt: DateTime.now().add(const Duration(minutes: 4))),
+    );
+    await tester.pumpAndSettle();
+
+    final String before = tester.widget<Text>(countdownLine).data!;
+    expect(before, startsWith('Próxima recompensa em 0'));
+  });
+
+  testWidgets('HOME: máquina nova na stream da sala exibe toast '
+      '"Máquina instalada na sala" e atualiza os slots',
+      (WidgetTester tester) async {
+    final _FakeMachinesRepository machinesRepo =
+        _FakeMachinesRepository(const <MachineModel>[]);
+    await _pumpHome(
+      tester,
+      auth: _FakeAuthService(user: _FakeUser()),
+      profileRepo: _FakeProfileRepository(null),
+      walletRepo: _FakeWalletRepository(null),
+      powerRepo: _FakePowerRepository(null),
+      machinesRepo: machinesRepo,
+    );
+
+    expect(_emptySlots, findsNWidgets(10));
+
+    // Runner aprova a compra => item entra em machines/{uid}/items.
+    machinesRepo.emit(const <MachineModel>[
+      MachineModel(
+        id: 'item-1',
+        type: 'rig-scrap',
+        level: 1,
+        power: 10,
+        active: true,
+        metadata: <String, dynamic>{'rarity': 'common'},
+      ),
+    ]);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Máquina instalada na sala'), findsOneWidget);
+    expect(find.text('LV.1'), findsOneWidget);
+    expect(_emptySlots, findsNWidgets(9));
   });
 
   testWidgets('HOME: botão "+" abre bottom sheet informativo "EM BREVE"',

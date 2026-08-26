@@ -8,8 +8,9 @@ import '../../../core/widgets/neon_icons.dart';
 import '../../../core/widgets/skeleton_box.dart';
 
 /// Header da LOJA: saldo disponível oficial (wallet_repository, cache-first)
-/// formatado com [CoinFormat] + rótulo COIN provisório. Sem saldo => "—".
-/// Nada econômico é calculado aqui — apenas espelho de leitura.
+/// formatado com [CoinFormat] + rótulo COIN provisório. Saldo ausente/zero
+/// => "0" (NUNCA "—" — o jogador sempre vê um valor numérico). Nada
+/// econômico é calculado aqui — apenas espelho de leitura.
 class StoreHeader extends StatelessWidget {
   const StoreHeader({
     super.key,
@@ -56,11 +57,11 @@ class StoreHeader extends StatelessWidget {
                   Semantics(
                     label: 'Saldo disponível',
                     value: availableBalance == null
-                        ? 'indisponível'
+                        ? '0'
                         : CoinFormat.formatMinimalUnits(availableBalance!),
                     child: Text(
                       availableBalance == null
-                          ? '—'
+                          ? '0'
                           : CoinFormat.formatMinimalUnits(availableBalance!),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,

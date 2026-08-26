@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -14,6 +16,7 @@ import '../../core/widgets/skeleton_box.dart';
 import '../../data/models/machine_model.dart';
 import '../../data/models/power_model.dart';
 import '../../data/models/wallet_model.dart';
+import '../../data/repositories/mining_repository.dart';
 import 'widgets/home_header.dart';
 import 'widgets/machine_room_grid.dart';
 import 'widgets/missions_shortcut_card.dart';
@@ -41,6 +44,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   PowerModel? _power;
   List<MachineModel> _machines = const <MachineModel>[];
   int _machineSlots = 10; // fallback; oficial vem de config/economy
+  BlockSnapshot? _block; // schedule oficial do próximo bloco (countdown)
+
+  StreamSubscription<BlockSnapshot?>? _blockSub;
+  StreamSubscription<List<MachineModel>>? _machinesSub;
+
+  /// Baseline da sala para detectar INSTALAÇÃO NOVA (toast). `null` =
+  /// baseline ainda não estabelecida (primeiro evento nunca notifica).
+  int? _knownMachineCount;
 
   @override
   bool get wantKeepAlive => true;
@@ -49,6 +60,62 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   void initState() {
     super.initState();
     _load();
+  }
+
+  @override
+  void dispose() {
+    _blockSub?.cancel();
+    _machinesSub?.cancel();
+    super.dispose();
+  }
+
+  /// Streams em TEMPO REAL: countdown (`blocks/current`) e sala de máquinas
+  /// (`machines/{uid}/items`). Quando o runner aprova uma compra (intent
+  /// done), o novo item entra na stream => sala atualiza + toast.
+  void _subscribeStreams(String uid) {
+    // Tolerante a backend ausente (Firebase não inicializado/offline):
+    // qualquer falha vira estado vazio — NUNCA derruba a tela.
+    try {
+      _blockSub ??= ref
+          .read(miningRepositoryProvider)
+          .watchBlockSnapshot()
+          .listen(
+            (BlockSnapshot? block) {
+              if (!mounted) return;
+              setState(() => _block = block);
+            },
+            onError: (Object _) {/* estado vazio — nunca quebra a tela */},
+          );
+    } catch (_) {/* sem schedule oficial => "--:--" */}
+
+    try {
+      _machinesSub ??= ref
+          .read(machinesRepositoryProvider)
+          .watchMachines(uid)
+          .listen(
+            (List<MachineModel> machines) {
+              if (!mounted) return;
+              final int? known = _knownMachineCount;
+              if (known != null && machines.length > known) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    behavior: SnackBarBehavior.floating,
+                    backgroundColor: AppColors.surface,
+                    content: Text(
+                      'Máquina instalada na sala',
+                      style: TextStyle(color: AppColors.green),
+                    ),
+                  ),
+                );
+              }
+              setState(() {
+                _machines = machines;
+                _knownMachineCount = machines.length;
+              });
+            },
+            onError: (Object _) {/* estado vazio — nunca quebra a tela */},
+          );
+    } catch (_) {/* sala permanece com o último snapshot carregado */}
   }
 
   Future<void> _load() async {
@@ -61,6 +128,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
         setState(() => _status = _HomeStatus.ready);
         return;
       }
+
+      // Countdown + sala de máquinas em tempo real.
+      _subscribeStreams(uid);
 
       // Perfil é essencial (erro => retry); dados econômicos são
       // tolerantes: falha => null => "—" (nunca bloqueia a tela).
@@ -93,6 +163,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
         _power = data[2] as PowerModel?;
         _machines = data[3] as List<MachineModel>;
         _machineSlots = (data[4] as int?) ?? 10;
+        _knownMachineCount ??= _machines.length;
         _status = _HomeStatus.ready;
       });
     } catch (_) {
@@ -207,6 +278,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
         PowerSummaryCard(
           totalPower: _power?.totalPower,
           permanentPower: _power?.permanentPower,
+          block: _block,
         ),
         const SizedBox(height: 20),
         const MissionsShortcutCard(),
