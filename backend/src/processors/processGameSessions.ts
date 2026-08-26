@@ -9,7 +9,12 @@
  * A função PURA validateGameSession é testável sem Firestore.
  */
 import { FieldValue, Firestore } from 'firebase-admin/firestore';
-import { EconomyConfig, GameDoc, ProcessingSummary } from '../core/types';
+import {
+  EconomyConfig,
+  GameConfiguration,
+  GameDoc,
+  ProcessingSummary,
+} from '../core/types';
 import { getEconomyConfig } from '../core/config';
 import { createTempGrant, recalcPower } from '../core/power';
 import { writeAudit, auditEventId } from '../core/audit';
@@ -31,6 +36,11 @@ export interface SessionValidationInput {
   score: unknown;
   /** Abates reportados pelo cliente (opcional; validado contra score). */
   kills?: unknown;
+  /**
+   * Breakdown de gameplay (neon-hopper em diante): {stomps, coins, flagReached}.
+   * O score OFICIAL é recalculado no servidor a partir dele (doc 05 §12/§51).
+   */
+  breakdown?: unknown;
   game: GameDoc | null;
   limits: EconomyConfig['limits'];
   defaultPowerBaseReward: number;
@@ -43,6 +53,69 @@ export type SessionValidationResult =
 
 /** Tolerância de relógio aplicada à duração nominal do game (±3s). */
 export const GAME_DURATION_TOLERANCE_S = 3;
+
+/** Tetos padrão de breakdown quando o game não os define (espelho das rules). */
+export const DEFAULT_MAX_STOMPS = 60;
+export const DEFAULT_MAX_COINS = 40;
+
+export type BreakdownValidationResult =
+  | { ok: true; officialScore: number }
+  | { ok: false; reason: string };
+
+/**
+ * Score OFICIAL por breakdown (PURO — neon-hopper em diante).
+ *
+ * Games com pointsPerStomp > 0 EXIGEM breakdown {stomps, coins, flagReached}:
+ *   oficial = stomps×pointsPerStomp + coins×pointsPerCoin + flagReached×flagBonus
+ * Rejeita: ausente, campos extras/ausentes, tipos errados, tetos
+ * (maxStomps/maxCoins) e score do cliente ≠ oficial.
+ *
+ * Games sem pointsPerStomp (legado/nova-swarm): breakdown ignorado se enviado.
+ */
+export function validateBreakdownScore(
+  breakdown: unknown,
+  clientScore: number,
+  cfg: GameConfiguration,
+): BreakdownValidationResult {
+  if (cfg.pointsPerStomp <= 0) {
+    return { ok: true, officialScore: clientScore }; // game sem breakdown
+  }
+  if (breakdown === null || typeof breakdown !== 'object' || Array.isArray(breakdown)) {
+    return { ok: false, reason: 'BREAKDOWN_REQUIRED' };
+  }
+  const b = breakdown as Record<string, unknown>;
+  const keys = Object.keys(b);
+  if (
+    keys.length !== 3 ||
+    !keys.includes('stomps') ||
+    !keys.includes('coins') ||
+    !keys.includes('flagReached')
+  ) {
+    return { ok: false, reason: 'BREAKDOWN_INVALID' };
+  }
+  const maxStomps = cfg.maxStomps > 0 ? cfg.maxStomps : DEFAULT_MAX_STOMPS;
+  const maxCoins = cfg.maxCoins > 0 ? cfg.maxCoins : DEFAULT_MAX_COINS;
+  const stomps = b.stomps;
+  const coins = b.coins;
+  const flagReached = b.flagReached;
+  if (typeof stomps !== 'number' || !Number.isSafeInteger(stomps) || stomps < 0 || stomps > maxStomps) {
+    return { ok: false, reason: 'BREAKDOWN_INVALID' };
+  }
+  if (typeof coins !== 'number' || !Number.isSafeInteger(coins) || coins < 0 || coins > maxCoins) {
+    return { ok: false, reason: 'BREAKDOWN_INVALID' };
+  }
+  if (typeof flagReached !== 'boolean') {
+    return { ok: false, reason: 'BREAKDOWN_INVALID' };
+  }
+  const official =
+    stomps * cfg.pointsPerStomp +
+    coins * cfg.pointsPerCoin +
+    (flagReached ? cfg.flagBonus : 0);
+  if (official !== clientScore) {
+    return { ok: false, reason: 'SCORE_MISMATCH' };
+  }
+  return { ok: true, officialScore: official };
+}
 
 /**
  * Valida a sessão contra a config do game (TUDO no servidor).
@@ -106,6 +179,12 @@ export function validateGameSession(input: SessionValidationInput): SessionValid
   const killsError = validateKillsConsistency(input.kills, input.score, cfg.pointsPerKill);
   if (killsError) return { ok: false, reason: killsError };
 
+  // Breakdown (neon-hopper em diante): score OFICIAL recalculado no servidor;
+  // score do cliente ≠ oficial ⇒ rejeita (SCORE_MISMATCH). Espelho EXATO da
+  // validação nas security rules (get() na config do game).
+  const breakdown = validateBreakdownScore(input.breakdown, input.score as number, cfg);
+  if (!breakdown.ok) return { ok: false, reason: breakdown.reason };
+
   if (input.sessionsToday >= limits.maxSessionsPerDay) {
     return { ok: false, reason: 'DAILY_LIMIT_REACHED' };
   }
@@ -143,6 +222,11 @@ async function loadGame(db: Firestore, gameId: unknown): Promise<GameDoc | null>
         powerCapPerSessionBaseUnits: Number(rawCfg.powerCapPerSessionBaseUnits ?? 0),
         powerFormula: typeof rawCfg.powerFormula === 'string' ? rawCfg.powerFormula : '',
         pointsPerKill: Number(rawCfg.pointsPerKill ?? 0),
+        pointsPerStomp: Number(rawCfg.pointsPerStomp ?? 0),
+        pointsPerCoin: Number(rawCfg.pointsPerCoin ?? 0),
+        flagBonus: Number(rawCfg.flagBonus ?? 0),
+        maxStomps: Number(rawCfg.maxStomps ?? 0),
+        maxCoins: Number(rawCfg.maxCoins ?? 0),
       }
     : null;
   if (configuration && configuration.maxExpectedScore <= 0) return {
@@ -176,6 +260,7 @@ async function handleSession(
       finishedAtMs: toMillisSafe(data.finishedAt),
       score: data.score,
       kills: data.kills,
+      breakdown: data.breakdown,
       game,
       limits: economy.limits,
       defaultPowerBaseReward: economy.powerBasePerHs,
@@ -262,9 +347,19 @@ async function handleSession(
     // Progresso de missões/conquistas a partir do evento REAL consolidado
     // (somente quando o grant foi criado — idempotente por sessionId).
     if (created) {
-      const kills = typeof data.kills === 'number' && Number.isSafeInteger(data.kills) && data.kills > 0
-        ? data.kills
-        : 0;
+      // neon-hopper: stomps do breakdown alimentam o metric 'kills' (mesmo
+      // domínio "inimigos derrotados") quando kills não é enviado direto.
+      const breakdownStomps =
+        data.breakdown !== null &&
+        typeof data.breakdown === 'object' &&
+        typeof (data.breakdown as Record<string, unknown>).stomps === 'number'
+          ? Number((data.breakdown as Record<string, unknown>).stomps)
+          : 0;
+      const rawKills =
+        typeof data.kills === 'number' && Number.isSafeInteger(data.kills)
+          ? data.kills
+          : breakdownStomps;
+      const kills = Number.isSafeInteger(rawKills) && rawKills > 0 ? rawKills : 0;
       const finalScore = typeof data.score === 'number' ? data.score : 0;
       await bumpMissionProgress(db, uid, 'plays', 'add', 1, nowMs);
       await bumpMissionProgress(db, uid, 'max_score', 'max', finalScore, nowMs);

@@ -23,6 +23,7 @@ import '../data/repositories/profile_repository.dart';
 import '../data/models/wallet_model.dart';
 import '../data/repositories/payouts_repository.dart';
 import '../data/repositories/wallet_repository.dart';
+import 'config/payout_config.dart' show kPayoutMode;
 import 'services/withdrawal_service.dart';
 import 'services/auth_service.dart';
 import 'services/claim_service.dart';
@@ -345,11 +346,31 @@ final StreamProvider<List<MissionView>> seasonMissionsStreamProvider =
 final Provider<PayoutsRepositoryApi> payoutsRepositoryProvider =
     Provider<PayoutsRepositoryApi>((Ref ref) => PayoutsRepository());
 
-/// Serviço de saque (cria withdrawalIntents; observação do resultado).
+/// Serviço de saque NO CLIENTE (12.18): reserva → payout FaucetPay →
+/// conclusão/estorno. Chave via --dart-define ou config local gitignored.
+/// 12.20: o provider escolhido depende de [kPayoutMode] ('auto'|'manual').
 final Provider<WithdrawalService> withdrawalServiceProvider =
-    Provider<WithdrawalService>((Ref ref) => WithdrawalService(
-          repository: ref.watch(payoutsRepositoryProvider),
-        ));
+    Provider<WithdrawalService>((Ref ref) => WithdrawalService());
+
+/// Observador do MODO MANUAL (12.20): liquida sozinho (conclusão/estorno)
+/// quando o operador define o status do doc `withdrawals/{id}` no Console.
+final Provider<ManualPayoutWatcher> manualPayoutWatcherProvider =
+    Provider<ManualPayoutWatcher>((Ref ref) => ManualPayoutWatcher());
+
+/// ATIVAÇÃO do observador manual: só conecta ao Firestore quando
+/// [kPayoutMode] == 'manual' E houver ouvinte vivo (shell/carteira).
+/// Em 'auto' (default, inclusive testes) não toca no Firestore.
+final StreamProvider<void> manualPayoutWatchProvider =
+    StreamProvider<void>((Ref ref) async* {
+  if (kPayoutMode != 'manual') return;
+  try {
+    final String? uid = await ref.watch(currentUidProvider.future);
+    if (uid == null) return;
+    yield* ref.watch(manualPayoutWatcherProvider).watch(uid);
+  } catch (_) {
+    // Tolerante a falhas: sem sessão/Firestore ⇒ observador inativo.
+  }
+});
 
 /// Config de saques (ativos habilitados, mínimos, taxas) — "valores definidos
 /// pelo servidor". Tolerante: doc ausente/erro ⇒ null (estado vazio).

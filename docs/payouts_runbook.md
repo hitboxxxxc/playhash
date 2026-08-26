@@ -187,6 +187,139 @@ andamento — acompanhar até zerar pendências antes/depois do rollback.
   **Lição**: SEMPRE validar rules no emulador antes de publicar — o Console
   não detecta função inexistente.
 
+## 7.7 v5/12.18 — PAYOUT FAUCETPAY NO CLIENTE (CHAVE TEMPORÁRIA), SEM COOLDOWN
+
+> **DECISÃO ABSOLUTA DO DONO (registrada nesta data):** o payout FaucetPay foi
+> movido para o CLIENTE. O runner continua existindo para TODA a economia
+> (créditos, missões, ligas, loja), mas o fluxo de saque LTC agora executa no
+> app: **reserva → payout → conclusão OU estorno integral**.
+
+### Parâmetros (config local; exibição derivada)
+
+| Parâmetro | Valor |
+|---|---|
+| `kLitoshiPerCoin` | 100 (1 COIN = 0,000001 LTC) |
+| `kFeeCoins` | 2 COIN |
+| `kMinWithdrawCoins` | 3 COIN (recebido mínimo = 1 COIN = 0,000001 LTC) |
+| `kMaxPerWithdrawalCoins` | 100.000 COIN (teto do dono, ajustável) |
+| Cooldown 24h | **REMOVIDO** — sem trava entre saques |
+
+Arquivo de config: `lib/core/config/payout_config.dart` (**GITIGNORED**) +
+`payout_config.example.dart` (commitado, sem chave). A chave efetiva é
+`String.fromEnvironment('FAUCETPAY_API_KEY', defaultValue: kTempKey)` — em
+release a oficial entra por `--dart-define` SEM editar código:
+
+```bash
+flutter build apk --release --dart-define=FAUCETPAY_API_KEY=<chave-oficial>
+```
+
+### Arquitetura nova
+
+- `lib/core/services/payout/payout_provider.dart` — abstração §27 mantida;
+- `lib/core/services/payout/faucetpay_provider.dart` — POST
+  `https://faucetpay.io/api/v1/send` `{api_key, currency:'LTC',
+  amount:<litoshi int>, to_user:<email>}`; timeout 15s; SEM retry automático;
+  erros mapeados p/ códigos seguros (`PROVIDER_ERROR`, `INVALID_AMOUNT`,
+  `INSUFFICIENT_PROVIDER_BALANCE`, `EMAIL_NOT_FOUND`, `RATE_LIMIT`);
+- `withdrawal_service.withdraw()`:
+  1. transação em `wallets/{uid}`: available ≥ amount ⇒ reserva
+     (available −= amount, pending += amount); senão SALDO_INSUFICIENTE;
+  2. payout com `litoshi = (amountCoins − feeCoins) × 100` (inteiro §20);
+  3. SUCESSO: pending −= amount (total diminui) + `withdrawals/{clientRequestId}`
+     `{uid, asset:'LTC', amountCoins, feeCoins, litoshi, destinationMasked,
+     status:'completed', providerReference, createdAt}`;
+  4. FALHA: estorno INTEGRAL (pending −= amount, available += amount) +
+     registro `status:'failed'` + errorCode seguro;
+- Idempotência por clientRequestId: o MESMO id NUNCA é reenviado ao provedor;
+- Timeout de UI 10s: o botão nunca fica em loop; sem resultado em 10s o app
+  avisa "ainda processando" e continua aguardando o resultado real.
+
+### Rules publicadas (12.18)
+
+- `wallets/{uid}`: update pelo DONO somente se
+  `(available+pending)` NUNCA aumentar **e** `lifetimeEarned` intacto
+  (anti-inflação; saldos são strings decimais ⇒ conversão `int()` nas rules).
+  Crédito continua EXCLUSIVAMENTE via Admin SDK.
+- `withdrawals/{id}`: create se `data.uid == auth.uid` com status final tipado
+  (`completed`/`failed`); read owner; update/delete negados ao cliente.
+- Publicadas via CLI (`npx firebase-tools deploy --only firestore:rules`,
+  conta mustarda0245) — o caminho da service account segue 403 IAM.
+
+### RISCOS aceitos pela decisão
+
+1. **Chave no APK**: debug/local usa a chave temporária gitignored; qualquer
+   build distribuído expõe a chave embutida (ofuscamento não é segredo).
+   Mitigação: chave temporária de saldo quase zero + troca por --dart-define.
+2. **Timeout ambíguo**: se o HTTP estourar o timeout após o provedor aceitar o
+   envio, o cliente pode estornar um pagamento que aconteceu. Valores mínimos
+   tornam o prejuízo máximo desprezível; monitorar `withdrawals`.
+3. **Cliente escreve withdrawals**: um usuário malicioso só consegue criar
+   registros do PRÓPRIO uid com status final — sem impacto em saldo alheio.
+
+## 7.8 v6/12.20 — ESPEC OFICIAL + MODO MANUAL DE OPERADOR ALTERNÁVEL
+
+### Provider automático na espec oficial
+
+- POST `https://faucetpay.io/api/v1/send`, body **form-urlencoded**
+  `{api_key, currency:'LTC', amount:<litoshi INTEIRO>, to_user:<email>}`;
+  timeout 15s; NUNCA JSON body; NUNCA GET.
+- Sucesso SOMENTE se `JSON.status == 200` (a API NÃO retorna campo `success` —
+  parsing anterior gerava falso-negativo e estorno indevido).
+- Erros lidos de `JSON.message`; mapeamento: "Invalid API key"→INVALID_API_KEY;
+  "Insufficient funds"→INSUFFICIENT_PROVIDER_BALANCE; "invalid amount"→
+  INVALID_AMOUNT; "does not exist"/username→EMAIL_NOT_FOUND; rede/5xx→
+  PROVIDER_ERROR (indisponível). UI mostra detalhe curto SEM segredo:
+  `http=<status> fp=<status json> msg=<message>`.
+- Balance opcional no sheet: POST `/api/v1/balance {api_key, currency:'LTC'}`
+  exibe "Disponível no provedor: X LTC" e BLOQUEIA valor acima disso.
+
+### MODO MANUAL (`kPayoutMode = 'auto' | 'manual'` em payout_config.dart)
+
+Fluxo manual (provider `ManualProvider`, mesma interface PayoutProvider):
+
+1. Usuário saca ⇒ RESERVA (available−=X, pending+=X; soma constante) +
+   doc `withdrawals/{clientRequestId}` com `status:'pending'`;
+2. UI: "aguardando pagamento manual do operador";
+3. Operador paga na FaucetPay e edita o doc no Console;
+4. O app OBSERVA o doc e finaliza sozinho:
+   - status → `'completed'` ⇒ pending −= X (**total DIMINUI**) + histórico completed;
+   - status → `'failed'` ⇒ pending −= X e available += X (**estorno integral**)
+     + histórico failed.
+
+Rules: `withdrawals/{id}` create owner com status `pending|completed|failed`;
+read owner; **update/delete NEGADOS ao cliente** (só o Console/Admin muda o
+status — Console bypassa rules).
+
+### GUIA DO OPERADOR (pagamento manual passo a passo)
+
+1. **Consultar pendentes**: Firebase Console → Firestore → coleção
+   `withdrawals` → filtre docs com `status == 'pending'`. Campos relevantes:
+   `destinationMasked` (e-mail mascarado), `litoshi` (valor a pagar),
+   `amountCoins`, `createdAt`.
+2. **Pagar na FaucetPay**: login na FaucetPay → Withdraw → para o e-mail
+   COMPLETO correspondente à máscara do doc (o e-mail completo está no app do
+   usuário; a máscara identifica o dono) → valor EXATO em LTC
+   (`litoshi ÷ 100.000.000`).
+3. **Finalizar no Console**: editar o MESMO doc `withdrawals/{id}`:
+   - pago com sucesso ⇒ `status: 'completed'` + `providerReference: '<id da
+     FaucetPay, ex.: 123456>'`;
+   - não pagou / erro ⇒ `status: 'failed'` (o app estorna sozinho).
+4. Em ≤ instantes o app do usuário liquida: débito final (completed) ou
+   estorno visível no saldo disponível (failed) + entrada no histórico.
+
+> Alternância de modo: editar `kPayoutMode` em
+> `lib/core/config/payout_config.dart` (gitignored) ou buildar com
+> `--dart-define=PAYOUT_MODE=manual`. Default: 'auto'.
+
+### Procedimento de TROCA DA CHAVE (pós-testes — AÇÃO HUMANA)
+
+1. Confirmar as duas provas E2E no dispositivo (completed + failed/estorno);
+2. **Queimar a chave temporária**: painel FaucetPay → API Keys → excluir;
+3. Gerar/inserir a chave OFICIAL **somente** via:
+   - release: `--dart-define=FAUCETPAY_API_KEY=<chave-oficial>`; ou
+   - edição local do `payout_config.dart` (gitignored — nunca commitar);
+4. Verificar que `git status` NUNCA lista `payout_config.dart`.
+
 ## 8. Responsáveis e incidentes
 
 - **Owner:** dono do repo (único com acesso aos secrets no GitHub).

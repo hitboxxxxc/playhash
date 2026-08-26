@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../../core/config/payout_config.dart';
 import '../../../core/services/withdrawal_service.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/utils/coin_format.dart';
@@ -8,38 +9,42 @@ import '../../../core/widgets/neon_button.dart';
 import '../../../core/widgets/neon_text_field.dart';
 
 /// Dados do ativo selecionado que o form precisa (desacoplado p/ testes).
-/// v3: destino = E-MAIL da conta FaucetPay; conversão FIXA em litoshi/coin
-/// (1 COIN = 100 litoshi = 0,000001 LTC) — EXIBIÇÃO derivada da config do
-/// servidor (nunca autoridade; doc 05 §47).
+/// 12.18: parâmetros vêm da CONFIG LOCAL ([kMinWithdrawCoins],
+/// [kMaxPerWithdrawalCoins], [kFeeCoins]) — mínimo 3 COIN, teto 100.000
+/// COIN, taxa 2 COIN, conversão fixa 1 COIN = 0,000001 LTC.
 class WithdrawAssetInfo {
   const WithdrawAssetInfo({
     required this.id,
     required this.network,
     required this.minWithdrawUnits,
     required this.feeUnits,
-    this.litoshiPerCoin = 100,
-    this.displayRate = '1 COIN = 0,000001 LTC',
+    this.maxPerWithdrawalUnits,
+    this.litoshiPerCoin = kLitoshiPerCoin,
+    this.displayRate = kDisplayRate,
   });
 
   final String id;
   final String network;
   final BigInt minWithdrawUnits;
+
+  /// Teto por saque (null = sem teto além do saldo).
+  final BigInt? maxPerWithdrawalUnits;
   final BigInt feeUnits;
 
-  /// Conversão FIXA: 1 COIN = [litoshiPerCoin] litoshi (config/payouts v3).
+  /// Conversão FIXA: 1 COIN = [litoshiPerCoin] litoshi.
   final int litoshiPerCoin;
 
-  /// Rótulo de exibição da conversão (definido pelo servidor).
+  /// Rótulo de exibição da conversão.
   final String displayRate;
 }
 
-/// Formulário de SAQUE (v3):
-/// - campo "E-mail da FaucetPay" com validação LOCAL leve (a autoridade é o
-///   runner + rules) e AVISO fixo sob o campo;
-/// - valor com botão MÁX. (= saldo disponível) e notifier de COINS inteiras
-///   ([amountCoins]) p/ a conversão EM TEMPO REAL no sheet de confirmação;
-/// - card de taxa MINIMALISTA: apenas "Taxa: X COIN" da config do servidor;
-/// - CTA chanfrado SOLICITAR SAQUE + aviso de segurança.
+/// Formulário de SAQUE (12.18/12.22):
+/// - campo "E-mail ou endereço LTC da FaucetPay" com validação LOCAL leve
+///   (destino DUPLO: e-mail OU linked address) e AVISO fixo;
+/// - valor em COINS INTEIRAS (teclado numérico) com botão MÁX. e
+///   notifier de coins p/ a conversão EM TEMPO REAL no sheet;
+/// - mínimo/teto SEMPRE visíveis; SEM qualquer menção a cooldown;
+/// - card de taxa + CTA chanfrado SOLICITAR SAQUE.
 class WithdrawForm extends StatefulWidget {
   const WithdrawForm({
     super.key,
@@ -53,11 +58,11 @@ class WithdrawForm extends StatefulWidget {
   final WithdrawAssetInfo asset;
   final BigInt availableBalance;
 
-  /// Disparado no submit com o valor (units) e o E-MAIL FaucetPay digitado.
+  /// Disparado no submit com o valor (units, múltiplo exato de 1 COIN) e o
+  /// E-MAIL FaucetPay digitado.
   final void Function(BigInt amountUnits, String destinationEmail) onSubmit;
 
-  /// Notifier opcional (form → sheet): COINS inteiras digitadas (floor),
-  /// atualizado a cada dígito. A conversão exibida é APRESENTAÇÃO.
+  /// Notifier opcional (form → sheet): COINS inteiras digitadas.
   final ValueNotifier<int>? amountCoins;
 
   final bool submitting;
@@ -71,8 +76,6 @@ class _WithdrawFormState extends State<WithdrawForm> {
   final TextEditingController _amountController = TextEditingController();
   final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
 
-  static final RegExp _amountRe = RegExp(r'^\d+([.,]\d{1,6})?$');
-
   @override
   void dispose() {
     _emailController.dispose();
@@ -80,74 +83,97 @@ class _WithdrawFormState extends State<WithdrawForm> {
     super.dispose();
   }
 
-  /// Converte o texto digitado em units inteiros (1 coin = 1e6 units).
-  BigInt? _parseAmountUnits(String text) {
-    final String normalized = text.trim().replaceAll(',', '.');
-    if (!_amountRe.hasMatch(normalized)) return null;
-    final List<String> parts = normalized.split('.');
-    final BigInt whole = BigInt.parse(parts[0]);
-    final String frac = (parts.length > 1 ? parts[1] : '').padRight(6, '0');
-    return whole * BigInt.from(1000000) + BigInt.parse(frac);
+  /// Parse SEGURO das COINS inteiras digitadas; vazio/inválido = 0.
+  int _parseAmountCoins(String text) {
+    final String normalized = text.trim().replaceAll('.', '');
+    if (normalized.isEmpty) return 0;
+    return int.tryParse(normalized) ?? 0;
   }
 
-  /// Parse SEGURO das coins inteiras digitadas (floor); vazio/inválido = 0.
-  int _parseAmountCoins(String text) {
-    final BigInt? units = _parseAmountUnits(text);
-    if (units == null || units <= BigInt.zero) return 0;
-    return (units ~/ BigInt.from(1000000)).toInt();
-  }
+  BigInt get _amountUnits =>
+      BigInt.from(_parseAmountCoins(_amountController.text)) *
+      BigInt.from(1000000);
 
   void _onAmountChanged(String text) {
     widget.amountCoins?.value = _parseAmountCoins(text);
   }
 
-  BigInt get _fee => widget.asset.feeUnits;
-
+  /// MÁX. = menor entre saldo disponível e o teto por saque.
   void _applyMax() {
-    final BigInt max = widget.availableBalance;
+    BigInt max = widget.availableBalance;
+    final BigInt? cap = widget.asset.maxPerWithdrawalUnits;
+    if (cap != null && cap < max) max = cap;
     if (max <= BigInt.zero) return;
     setState(() {
-      _amountController.text = CoinFormat.formatMinimalUnits(max);
+      _amountController.text =
+          CoinFormat.formatMinimalUnits(max).replaceAll('.', '');
     });
     _onAmountChanged(_amountController.text);
   }
 
   void _submit() {
     if (!(_formKey.currentState?.validate() ?? false)) return;
-    final BigInt? amount = _parseAmountUnits(_amountController.text);
-    if (amount == null || amount <= BigInt.zero) return;
+    final BigInt amount = _amountUnits;
+    if (amount <= BigInt.zero) return;
     widget.onSubmit(amount, _emailController.text.trim());
   }
 
   @override
   Widget build(BuildContext context) {
     final BigInt min = widget.asset.minWithdrawUnits;
+    final BigInt? cap = widget.asset.maxPerWithdrawalUnits;
+
+    String? validateAmount(String? v) {
+      final int coins = _parseAmountCoins(v ?? '');
+      if (coins <= 0) return 'Informe um valor válido.';
+      final BigInt amount = BigInt.from(coins) * BigInt.from(1000000);
+      if (amount < min) {
+        return 'Abaixo do mínimo (${CoinFormat.formatMinimalUnits(min)} COIN).';
+      }
+      if (cap != null && amount > cap) {
+        return 'Teto por saque: ${CoinFormat.formatMinimalUnits(cap)} COIN.';
+      }
+      if (amount > widget.availableBalance) {
+        return 'Saldo disponível insuficiente.';
+      }
+      return null;
+    }
 
     return Form(
       key: _formKey,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: <Widget>[
-          // E-mail da conta FaucetPay (destino v3 — transferência interna)
+          // Destino DUPLO (12.22): e-mail OU endereço LTC vinculado
           NeonTextField(
             controller: _emailController,
-            labelText: 'E-mail da FaucetPay',
-            hintText: 'Digite o e-mail da sua conta FaucetPay',
+            labelText: 'E-mail ou endereço LTC da FaucetPay',
+            hintText: 'E-mail da conta ou endereço LTC vinculado a ela',
             keyboardType: TextInputType.emailAddress,
             inputFormatters: <TextInputFormatter>[
               FilteringTextInputFormatter.deny(RegExp(r'\s')),
             ],
             validator: (String? v) {
               final String value = (v ?? '').trim();
-              if (value.isEmpty) return 'Informe o e-mail da FaucetPay.';
-              if (!isValidDestinationEmail(value)) {
-                return 'E-mail inválido.';
+              if (value.isEmpty) {
+                return 'Informe o e-mail ou o endereço LTC da FaucetPay.';
               }
-              return null;
+              switch (detectDestinationType(value)) {
+                case DestinationType.email:
+                  if (!isValidDestinationEmail(value)) {
+                    return 'E-mail inválido.';
+                  }
+                  return null;
+                case DestinationType.ltcAddress:
+                  return null; // regex LTC já validou o formato
+                case null:
+                  return 'Destino inválido: use um e-mail FaucetPay ou '
+                      'um endereço LTC.';
+              }
             },
           ),
           const SizedBox(height: 6),
-          // AVISO FIXO — destino é SEMPRE o e-mail FaucetPay (interno)
+          // AVISO FIXO — destino duplo (e-mail OU linked address)
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
@@ -156,8 +182,9 @@ class _WithdrawFormState extends State<WithdrawForm> {
               const SizedBox(width: 6),
               Expanded(
                 child: Text(
-                  'O saque é enviado para o seu e-mail da FaucetPay — '
-                  'não use endereço externo de carteira.',
+                  'Use o e-mail da sua conta FaucetPay OU o endereço LTC '
+                  'vinculado (linked address) dela.',
+                  key: const ValueKey<String>('destination_notice'),
                   style: TextStyle(
                     fontSize: 11.5,
                     height: 1.35,
@@ -168,34 +195,21 @@ class _WithdrawFormState extends State<WithdrawForm> {
             ],
           ),
           const SizedBox(height: 12),
-          // Valor + MÁX.
+          // Valor + MÁX. — COINS INTEIRAS, mínimo/teto visíveis
           Stack(
             alignment: Alignment.centerRight,
             children: <Widget>[
               NeonTextField(
                 controller: _amountController,
-                labelText: 'Valor',
+                labelText: 'Valor (COIN)',
                 hintText:
-                    'Mínimo ${CoinFormat.formatMinimalUnits(min)} COIN',
-                keyboardType:
-                    const TextInputType.numberWithOptions(decimal: true),
+                    'Mínimo $kMinWithdrawCoins · Máximo $kMaxPerWithdrawalCoins',
+                keyboardType: TextInputType.number,
                 inputFormatters: <TextInputFormatter>[
-                  FilteringTextInputFormatter.allow(RegExp(r'[\d.,]')),
+                  FilteringTextInputFormatter.digitsOnly,
                 ],
                 onChanged: _onAmountChanged,
-                validator: (String? v) {
-                  final BigInt? amount = _parseAmountUnits(v ?? '');
-                  if (amount == null || amount <= BigInt.zero) {
-                    return 'Informe um valor válido.';
-                  }
-                  if (amount < min) {
-                    return 'Abaixo do mínimo (${CoinFormat.formatMinimalUnits(min)}).';
-                  }
-                  if (amount > widget.availableBalance) {
-                    return 'Saldo disponível insuficiente.';
-                  }
-                  return null;
-                },
+                validator: validateAmount,
               ),
               Padding(
                 padding: const EdgeInsets.only(right: 10),
@@ -214,8 +228,19 @@ class _WithdrawFormState extends State<WithdrawForm> {
               ),
             ],
           ),
+          const SizedBox(height: 6),
+          // Mínimo/teto SEMPRE visíveis (12.18)
+          Text(
+            'Mínimo: $kMinWithdrawCoins COIN · Teto por saque: '
+            '$kMaxPerWithdrawalCoins COIN',
+            key: const ValueKey<String>('min_max_line'),
+            style: TextStyle(
+              fontSize: 11.5,
+              color: AppColors.textSecondary.withValues(alpha: 0.95),
+            ),
+          ),
           const SizedBox(height: 8),
-          // Card de TAXA — SOMENTE a taxa da config do servidor.
+          // Card de TAXA — config local (2 COIN)
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(12),
@@ -230,7 +255,7 @@ class _WithdrawFormState extends State<WithdrawForm> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
                 Text(
-                  'Taxa: ${CoinFormat.formatMinimalUnits(_fee)} COIN',
+                  'Taxa: $kFeeCoins COIN',
                   key: const ValueKey<String>('fee_line'),
                   style: const TextStyle(
                     fontSize: 12.5,
@@ -239,7 +264,7 @@ class _WithdrawFormState extends State<WithdrawForm> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'Valores definidos pelo servidor.',
+                  'Você recebe em LTC via FaucetPay.',
                   style: TextStyle(
                     fontSize: 11,
                     fontStyle: FontStyle.italic,
@@ -264,7 +289,8 @@ class _WithdrawFormState extends State<WithdrawForm> {
               const SizedBox(width: 6),
               Expanded(
                 child: Text(
-                  'Saques passam por validação e podem levar até 5 minutos.',
+                  'Pagamento processado via FaucetPay para o seu e-mail '
+                 'ou endereço LTC vinculado.',
                   style: TextStyle(
                     fontSize: 11.5,
                     color: AppColors.textSecondary.withValues(alpha: 0.9),

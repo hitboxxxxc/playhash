@@ -117,18 +117,12 @@ class NovaSwarmPainter extends CustomPainter {
   final Listenable repaint;
 
   static const Color _bg = Color(0xFF000005);
-  static const Color _shipTop = Color(0xFF00E5FF);
-  static const Color _shipBottom = Color(0xFF0077AA);
-  static const Color _shipOutline = Color(0xFF7DF3FF);
-  static const Color _flameA = Color(0xFFFFC400);
-  static const Color _flameB = Color(0xFFFF5252);
 
   final Paint _paint = Paint();
   final TextPainter _textPainter = TextPainter(textDirection: TextDirection.ltr);
   Size _lastSize = Size.zero;
   ui.Gradient? _nebulaA;
   ui.Gradient? _nebulaB;
-  Path? _shipPath;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -151,7 +145,9 @@ class NovaSwarmPainter extends CustomPainter {
     _paintPowerUps(canvas, s);
     _paintBullets(canvas, s);
     _paintEnemies(canvas, s);
-    _paintPlayer(canvas, s);
+    // NAVE DO JOGADOR: agora é o sprite próprio (assets/nave/) renderizado
+    // como WIDGET acima deste painter (ver PlayerShipSprite em player_sprite).
+    // O painter desenha apenas o muzzle flash (em _paintBullets).
     _paintParticles(canvas, s);
     _paintShockwaves(canvas, s);
     _paintFloatingTexts(canvas, s);
@@ -405,94 +401,6 @@ class NovaSwarmPainter extends CustomPainter {
   /// Pixels centrais removidos na "trinca" do primeiro hit.
   static bool _isCrack(Rect r) =>
       (r.left == 4 && (r.top == 3 || r.top == 4));
-
-  void _paintPlayer(Canvas canvas, NovaSwarmState s) {
-    if (s.endReason == NovaSwarmEndReason.dead) return;
-    final bool blink = s.isInvulnerable &&
-        ((s.elapsed * 8).floor() % 2 == 0); // pisca 8Hz
-
-    canvas.save();
-    canvas.translate(s.playerX, s.playerY);
-    canvas.rotate(s.playerBank);
-
-    // Flame do motor: triângulo animado 8–16dp a 12Hz.
-    final double flameH =
-        12 + 4 * math.sin(s.elapsed * 12 * 2 * math.pi);
-    final Path flame = Path()
-      ..moveTo(20, 42)
-      ..lineTo(26, 42 + flameH)
-      ..lineTo(32, 42)
-      ..close();
-    _paint
-      ..resetP()
-      ..shader = ui.Gradient.linear(
-        Offset(26, 42),
-        Offset(26, 42 + flameH),
-        <Color>[_flameA.withValues(alpha: 0.85), _flameB.withValues(alpha: 0.85)],
-      );
-    canvas.drawPath(flame, _paint);
-    _paint.shader = null;
-
-    // Corpo: gradiente vertical + contorno com glow.
-    final Path ship = _shipPath ??= NovaSwarmSprites.playerShip();
-    _paint
-      ..resetP()
-      ..shader = ui.Gradient.linear(
-        Offset(0, 0),
-        Offset(0, 44),
-        <Color>[_shipTop, _shipBottom],
-      )
-      ..color = _shipTop;
-    if (!blink) {
-      canvas.drawPath(ship, _paint);
-      _paint
-        ..shader = null
-        ..color = _shipOutline.withValues(alpha: 0.8)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 2
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6);
-      canvas.drawPath(ship, _paint);
-      _paint.maskFilter = null;
-      canvas.drawPath(ship, _paint);
-
-      // Cockpit: elipse branca α.9 4dp.
-      _paint
-        ..resetP()
-        ..color = const Color(0xFFFFFFFF).withValues(alpha: 0.9);
-      canvas.drawOval(Rect.fromCenter(center: const Offset(26, 14), width: 4, height: 7), _paint);
-    }
-
-    // Anel de escudo ciano durante invulnerabilidade.
-    if (s.isInvulnerable) {
-      _paint
-        ..resetP()
-        ..color = const Color(0xFF00E5FF).withValues(alpha: 0.5)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.5;
-      canvas.drawCircle(Offset(26, 22), 34, _paint);
-    }
-
-    // DOMO DE ESCUDO (power-up v2): azul translúcido pulsando levemente.
-    if (s.isShieldActive) {
-      final double pulse =
-          1 + 0.04 * math.sin(s.elapsed * 6 * math.pi);
-      final Rect domeRect = Rect.fromCenter(
-        center: const Offset(26, 24),
-        width: 84 * pulse,
-        height: 76 * pulse,
-      );
-      _paint
-        ..resetP()
-        ..color = const Color(0xFF2979FF).withValues(alpha: 0.22);
-      canvas.drawArc(domeRect, math.pi, math.pi, true, _paint);
-      _paint
-        ..color = const Color(0xFF7DD3FF).withValues(alpha: 0.75)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 2;
-      canvas.drawArc(domeRect, math.pi, math.pi, true, _paint);
-    }
-    canvas.restore();
-  }
 
   void _paintParticles(Canvas canvas, NovaSwarmState s) {
     for (final Particle p in s.particles) {

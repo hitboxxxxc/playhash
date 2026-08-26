@@ -104,16 +104,19 @@ void main() {
     expect(find.byKey(const ValueKey<String>('confirm_title')), findsOneWidget);
     expect(find.text('Ativo'), findsOneWidget);
     expect(find.text('LTC'), findsOneWidget);
-    expect(find.text('E-mail FaucetPay'), findsOneWidget);
+    expect(find.text('Destino (e-mail ou LTC)'), findsOneWidget);
     expect(find.text('ow***@example.com'), findsOneWidget);
     expect(find.text('Taxa'), findsOneWidget);
     expect(find.text('2 COIN'), findsOneWidget);
     expect(find.text('1 COIN = 0,000001 LTC'), findsOneWidget);
     // 58 − 2 = 56 × 100 = 5600 litoshi.
     expect(find.text('0,000056 LTC'), findsOneWidget);
-    // Aviso de validação ≤5 min + cooldown.
-    expect(find.textContaining('até 5 minutos'), findsOneWidget);
-    expect(find.textContaining('24h'), findsOneWidget);
+    // Aviso 12.18: pagamento via FaucetPay + estorno — SEM cooldown.
+    expect(find.byKey(const ValueKey<String>('confirm_notice')), findsOneWidget);
+    expect(find.textContaining('FaucetPay'), findsWidgets);
+    expect(find.textContaining('estornado'), findsOneWidget);
+    expect(find.textContaining('24h'), findsNothing);
+    expect(find.textContaining('intervalo'), findsNothing);
     // E-mail COMPLETO nunca aparece.
     expect(find.textContaining('owner@example.com'), findsNothing);
 

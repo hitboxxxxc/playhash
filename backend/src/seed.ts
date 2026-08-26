@@ -153,6 +153,28 @@ const NOVA_SWARM_V2_CONFIGURATION: Record<string, unknown> = {
   powerupDurations: { shieldSeconds: 6, doubleSeconds: 8 },
 };
 
+// Config v1 de gameplay do NEON HOPPER (plataforma 2D — MÉDIO, 45s, 3 vidas).
+// Score OFICIAL calculado NO SERVIDOR a partir do breakdown do cliente:
+//   score = stomps×pointsPerStomp + coins×pointsPerCoin + flagReached×flagBonus
+// Tantos anti-flood (espelhados nas security rules): maxStomps/maxCoins.
+// Fórmula de poder: linear_cap
+//   power = floor(min(score / maxExpectedScore, 1) × powerCapPerSessionBaseUnits)
+// powerCapPerSessionBaseUnits = 150_000 units = 150 H/s (powerBasePerHs = 1_000).
+const NEON_HOPPER_V1_CONFIGURATION: Record<string, unknown> = {
+  durationSeconds: 45,
+  lives: 3,
+  pointsPerStomp: 100,
+  pointsPerCoin: 50,
+  flagBonus: 500,
+  maxStomps: 60,
+  maxCoins: 40,
+  maxScore: 20_000,
+  maxScorePerSecond: 300,
+  maxExpectedScore: 6_000,
+  powerCapPerSessionBaseUnits: 150_000,
+  powerFormula: 'linear_cap',
+};
+
 /**
  * Catálogo de MISSÕES v1 — missions/{id} (create-if-absent; nunca sobrescreve).
  * metric: plays (partidas) · max_score (máx da partida) · kills (acumulado) ·
@@ -470,6 +492,15 @@ const GAMES: Record<string, Record<string, unknown>> = {
     enabled: true,
     version: 2,
     configuration: NOVA_SWARM_V2_CONFIGURATION,
+  },
+  // NEON HOPPER — plataforma 2D side-scroll (MÉDIO, 45s, 3 vidas). Score
+  // OFICIAL = f(breakdown) recalculado no servidor (doc 05 §12/§51).
+  'neon-hopper': {
+    name: 'NEON HOPPER',
+    difficulty: 'medium',
+    enabled: true,
+    version: 1,
+    configuration: NEON_HOPPER_V1_CONFIGURATION,
   },
 };
 

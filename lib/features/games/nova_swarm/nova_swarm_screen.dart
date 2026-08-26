@@ -11,6 +11,7 @@ import '../../../data/models/game_model.dart';
 import 'engine/game_state.dart';
 import 'engine/input_controller.dart';
 import 'engine/physics.dart';
+import 'engine/player_sprite.dart';
 import 'engine/renderer.dart';
 import 'widgets/countdown_overlay.dart';
 import 'widgets/hud.dart';
@@ -90,14 +91,19 @@ class _NovaSwarmScreenState extends ConsumerState<NovaSwarmScreen>
   /// MESMA instância de estado lida pelo Ticker (via ValueNotifier).
   /// Durante o countdown o loop está congelado, mas o alvo/toque são
   /// registrados — segurar o dedo através do GO funciona sem re-toque.
-  void _applyInput(double targetX, bool isTouching) {
+  void _applyInput(Offset target, bool isTouching) {
     final NovaSwarmState? s = _game?.value;
     if (s == null ||
         s.phase != NovaSwarmPhase.playing ||
         s.endReason != null) {
       return;
     }
-    _game!.value = s.copyWith(playerTargetX: targetX, shooting: isTouching);
+    // v3: alvo em X e Y (movimento livre em ambas as dimensões).
+    _game!.value = s.copyWith(
+      playerTargetX: target.dx,
+      playerTargetY: target.dy,
+      shooting: isTouching,
+    );
   }
 
   // ---- Loop ---------------------------------------------------------------
@@ -343,6 +349,20 @@ class _NovaSwarmScreenState extends ConsumerState<NovaSwarmScreen>
                 ),
                 child: const SizedBox.expand(),
               ),
+              // SPRITE PRÓPRIO do jogador (idle/esquerda/direita) com troca
+              // por estado de movimento; invulnerabilidade (piscar) e domo
+              // de escudo desenhados POR CIMA do PNG.
+              if (s.endReason != NovaSwarmEndReason.dead)
+                PlayerShipSprite(
+                  tilt: s.tilt,
+                  x: s.playerX,
+                  y: s.playerY,
+                  blinkVisible:
+                      !s.isInvulnerable || ((s.elapsed * 8).floor() % 2 == 0),
+                  showInvulnRing: s.isInvulnerable,
+                  showShieldDome: s.isShieldActive,
+                  elapsed: s.elapsed,
+                ),
               // COUNTDOWN 3-2-1-GO (loop congelado; timer inicia no GO).
               // IgnorePointer interno: NUNCA absorve toques do playfield.
               if (!_countdownDone && s.endReason == null)

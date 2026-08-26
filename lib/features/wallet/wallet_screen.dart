@@ -3,24 +3,25 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/config/payout_config.dart';
 import '../../core/providers.dart';
 import '../../core/services/withdrawal_service.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_theme.dart';
 import '../../data/models/wallet_model.dart';
-import '../../data/repositories/payouts_repository.dart';
-import 'widgets/asset_selector.dart';
+import '../../data/repositories/payouts_repository.dart'
+    show RewardHistoryEntry, WithdrawalModel;
 import 'widgets/wallet_header.dart';
 import 'widgets/wallet_history_list.dart';
 import 'widgets/withdraw_confirm_sheet.dart';
 import 'widgets/withdraw_form.dart';
 
-/// CARTEIRA — saldos (disponível/pendente/vitalício), saque com seletor de
-/// ativo + endereço + valor/taxa, histórico mesclado com status.
+/// CARTEIRA — saldos (disponível/pendente/vitalício), saque com destino =
+/// E-MAIL FaucetPay, histórico mesclado com status.
 ///
-/// O cliente SÓ SOLICITA o saque (withdrawalIntents); validação, reserva,
-/// pagamento e estorno são 100% do runner (≤5 min). Overlay "processando"
-/// observa `withdrawals/{clientRequestId}` até completed/failed.
+/// 12.18: o payout roda NO CLIENTE (reserva → FaucetPay → conclusão OU
+/// estorno integral). SEM cooldown 24h. Mínimo/taxa/teto vêm da config local
+/// ([kMinWithdrawCoins]/[kFeeCoins]/[kMaxPerWithdrawalCoins]).
 class WalletScreen extends ConsumerStatefulWidget {
   const WalletScreen({super.key});
 
@@ -29,9 +30,7 @@ class WalletScreen extends ConsumerStatefulWidget {
 }
 
 class _WalletScreenState extends ConsumerState<WalletScreen> {
-  String _selectedAssetId = '';
   bool _submitting = false;
-  StreamSubscription<WithdrawalResult>? _watchSub;
 
   /// COINS inteiras digitadas no form (atualizadas a cada dígito) — alimenta
   /// a conversão EM TEMPO REAL do sheet de confirmação (apresentação).
@@ -39,7 +38,6 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
 
   @override
   void dispose() {
-    _watchSub?.cancel();
     _amountCoins.dispose();
     super.dispose();
   }
@@ -77,45 +75,69 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
     );
   }
 
-  /// CONFIRMAÇÃO EXPLÍCITA → cria a intent → observa o resultado do runner.
+  /// CONFIRMAÇÃO EXPLÍCITA → executa o saque NO CLIENTE (12.18).
+  ///
+  /// TIMEOUT de UI 10s: após 10s avisa "ainda processando" mas CONTINUA
+  /// aguardando o resultado real (o botão nunca fica em loop; o estorno/
+  /// conclusão acontece de qualquer forma no serviço).
   Future<void> _submit({
-    required PayoutAsset asset,
     required BigInt amountUnits,
-    required String destinationEmail,
+    required String destination,
   }) async {
     if (!mounted) return;
 
-    // Sheet de confirmação OBRIGATÓRIA antes do intent (v3). A conversão é
-    // recalculada EM TEMPO REAL dentro da sheet via notifier (apresentação).
+    // Sheet de confirmação OBRIGATÓRIA antes do payout.
     final bool confirmed = await WithdrawConfirmSheet.show(
       context,
-      assetId: asset.id,
-      destinationMasked: maskEmail(destinationEmail),
+      assetId: 'LTC',
+      destinationMasked: maskDestination(destination),
       amountUnits: amountUnits,
-      feeUnits: asset.feeUnits,
-      litoshiPerCoin: asset.litoshiPerCoin,
-      displayRate: asset.displayRate,
-      minWithdrawUnits: asset.minWithdrawUnits,
-      availableBalance: ref.read(walletStreamProvider).value?.availableBalance ??
-          BigInt.zero,
+      feeUnits: BigInt.from(kFeeCoins) * BigInt.from(1000000),
+      litoshiPerCoin: kLitoshiPerCoin,
+      displayRate: kDisplayRate,
+      minWithdrawUnits:
+          BigInt.from(kMinWithdrawCoins) * BigInt.from(1000000),
+      availableBalance:
+          ref.read(walletStreamProvider).value?.availableBalance ??
+              BigInt.zero,
       amountCoins: _amountCoins,
     );
-    if (!confirmed || !mounted) return; // CANCELAR ⇒ NADA é criado
+    if (!confirmed || !mounted) return; // CANCELAR ⇒ NADA acontece
 
     final String? uid = await ref.read(currentUidProvider.future);
     if (uid == null || !mounted) return;
 
+    final int amountCoins =
+        (amountUnits ~/ BigInt.from(1000000)).toInt();
     final WithdrawalService service = ref.read(withdrawalServiceProvider);
     setState(() => _submitting = true);
-    final String requestId;
+
+    final Future<WithdrawalOutcome> pending = service.withdraw(
+      uid: uid,
+      amountCoins: amountCoins,
+      destination: destination,
+    );
+    WithdrawalOutcome outcome;
     try {
-      // Retry offline usa o MESMO clientRequestId (idempotência).
-      requestId = await service.requestWithdrawal(
-        uid: uid,
-        asset: asset.id,
-        amountUnits: amountUnits,
-        destinationEmail: destinationEmail,
+      outcome = await pending.timeout(const Duration(seconds: 10));
+    } on TimeoutException {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'A confirmação está demorando. Aguarde — o resultado aparece '
+            'em instantes.',
+          ),
+          backgroundColor: AppColors.error,
+        ),
       );
+      try {
+        outcome = await pending;
+      } on Exception {
+        if (!mounted) return;
+        setState(() => _submitting = false);
+        return;
+      }
     } on WithdrawalException catch (e) {
       if (!mounted) return;
       setState(() => _submitting = false);
@@ -125,26 +147,13 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
       return;
     }
     if (!mounted) return;
-    _listenResult(requestId);
+    setState(() => _submitting = false);
+    _showResultSheet(outcome);
   }
 
-  /// Observa o resultado do runner e mostra overlay verde/vermelho.
-  void _listenResult(String requestId) {
-    _watchSub?.cancel();
-    _watchSub = ref
-        .read(withdrawalServiceProvider)
-        .watchWithdrawal(requestId)
-        .listen((WithdrawalResult result) {
-      if (!result.isCompleted && !result.isFailed) return; // ainda processando
-      _watchSub?.cancel();
-      if (!mounted) return;
-      setState(() => _submitting = false);
-      _showResultSheet(result);
-    });
-  }
-
-  void _showResultSheet(WithdrawalResult result) {
+  void _showResultSheet(WithdrawalOutcome result) {
     final bool ok = result.isCompleted;
+    final bool pending = result.isPending;
     showModalBottomSheet<void>(
       context: context,
       backgroundColor: AppColors.surface,
@@ -157,23 +166,45 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
             Icon(
-              ok ? Icons.check_circle : Icons.error_outline,
-              color: ok ? AppColors.green : AppColors.error,
+              ok
+                  ? Icons.check_circle
+                  : pending
+                      ? Icons.hourglass_top
+                      : Icons.error_outline,
+              color: ok
+                  ? AppColors.green
+                  : pending
+                      ? AppColors.gold
+                      : AppColors.error,
               size: 44,
             ),
             const SizedBox(height: 12),
             Text(
-              ok ? 'SAQUE CONCLUÍDO' : 'SAQUE NÃO CONCLUÍDO',
+              ok
+                  ? 'SAQUE CONCLUÍDO'
+                  : pending
+                      ? 'AGUARDANDO PAGAMENTO'
+                      : 'SAQUE NÃO CONCLUÍDO',
               style: AppTheme.neonLabel(
                 fontSize: 15,
-                color: ok ? AppColors.green : AppColors.error,
+                color: ok
+                    ? AppColors.green
+                    : pending
+                        ? AppColors.gold
+                        : AppColors.error,
               ),
             ),
             const SizedBox(height: 10),
             Text(
               ok
-                  ? 'Referência: ${result.reference ?? '—'}'
-                  : withdrawalErrorMessage(result.errorCode),
+                  ? 'Pagamento enviado via FaucetPay.\n'
+                      'Referência: ${result.reference ?? '—'}'
+                  : pending
+                      ? 'Aguardando pagamento manual do operador.\n'
+                          'O valor fica RESERVADO (pendente) e o histórico '
+                          'atualiza em instantes após a definição do status.'
+                      : '${withdrawalErrorMessage(result.errorCode)}\n'
+                          'O valor foi estornado ao saldo disponível.',
               textAlign: TextAlign.center,
               style: const TextStyle(
                 fontSize: 13.5,
@@ -181,6 +212,20 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
                 color: AppColors.textPrimary,
               ),
             ),
+            if (!ok && !pending && (result.detail?.isNotEmpty ?? false))
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  result.detail!,
+                  key: const ValueKey<String>('withdraw_error_detail'),
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontFamily: 'monospace',
+                    color: AppColors.textSecondary.withValues(alpha: 0.9),
+                  ),
+                ),
+              ),
           ],
         ),
       ),
@@ -189,8 +234,9 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final AsyncValue<PayoutsConfigModel?> config =
-        ref.watch(payoutsConfigProvider);
+    // Ativa o observador do MODO MANUAL (no-op quando kPayoutMode != manual):
+    // finaliza/estorna sozinho quando o operador define o status no Console.
+    ref.watch(manualPayoutWatchProvider);
     final AsyncValue<WalletModel?> wallet = ref.watch(walletStreamProvider);
 
     return Scaffold(
@@ -233,69 +279,7 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
                 const SizedBox(height: 8),
                 Text('SACAR', style: AppTheme.neonLabel(fontSize: 12)),
                 const SizedBox(height: 8),
-                config.maybeWhen(
-                  data: (PayoutsConfigModel? cfg) {
-                    // TODOS os ativos vão p/ o seletor: habilitados clicáveis,
-                    // desabilitados com selo "EM BREVE" (não selecionáveis).
-                    final List<PayoutAsset> all =
-                        cfg?.assets ?? const <PayoutAsset>[];
-                    final List<PayoutAsset> enabled = all
-                        .where((PayoutAsset a) => a.enabled)
-                        .toList(growable: false);
-                    // FALLBACK 12.9: config ausente/ilegível NUNCA bloqueia o
-                    // saque por parse local — exibe o ativo padrão (LTC) e
-                    // deixa a AUTORIDADE (runner/rules) validar de verdade.
-                    final bool useFallback = enabled.isEmpty;
-                    final List<PayoutAsset> selectable = useFallback
-                        ? <PayoutAsset>[_kFallbackLtc]
-                        : enabled;
-                    final List<WalletAssetChip> chips = useFallback
-                        ? selectable
-                            .map((PayoutAsset a) => WalletAssetChip(
-                                  id: a.id,
-                                  network: a.network,
-                                  symbol: _symbolFor(a.id),
-                                  enabled: true,
-                                ))
-                            .toList(growable: false)
-                        : all
-                            .map((PayoutAsset a) => WalletAssetChip(
-                                  id: a.id,
-                                  network: a.network,
-                                  symbol: _symbolFor(a.id),
-                                  enabled: a.enabled,
-                                ))
-                            .toList(growable: false);
-                    if (_selectedAssetId.isEmpty ||
-                        !selectable.any((PayoutAsset a) =>
-                            a.id == _selectedAssetId)) {
-                      _selectedAssetId = selectable.first.id;
-                    }
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: <Widget>[
-                        AssetSelector(
-                          assets: chips,
-                          selectedId: _selectedAssetId,
-                          onSelected: (String id) =>
-                              setState(() => _selectedAssetId = id),
-                        ),
-                        const SizedBox(height: 16),
-                        _buildForm(selectable),
-                      ],
-                    );
-                  },
-                  orElse: () => const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 16),
-                    child: Text(
-                      'Carregando configurações de saque…',
-                      style: TextStyle(
-                        fontSize: 12.5,
-                        color: AppColors.textSecondary,
-                      ),
-                    ),
-                  ),
-                ),
+                _buildForm(),
                 const SizedBox(height: 24),
                 Text('HISTÓRICO', style: AppTheme.neonLabel(fontSize: 12)),
                 const SizedBox(height: 4),
@@ -308,55 +292,30 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
     );
   }
 
-  Widget _buildForm(List<PayoutAsset> assets) {
-    final PayoutAsset asset =
-        assets.firstWhere((PayoutAsset a) => a.id == _selectedAssetId);
+  Widget _buildForm() {
     final BigInt available =
         ref.watch(walletStreamProvider).value?.availableBalance ?? BigInt.zero;
     return WithdrawForm(
-      key: ValueKey<String>('form_${asset.id}'),
+      key: const ValueKey<String>('form_LTC'),
       asset: WithdrawAssetInfo(
-        id: asset.id,
-        network: asset.network,
-        minWithdrawUnits: asset.minWithdrawUnits,
-        feeUnits: asset.feeUnits,
+        id: 'LTC',
+        network: 'FaucetPayEmail',
+        minWithdrawUnits:
+            BigInt.from(kMinWithdrawCoins) * BigInt.from(1000000),
+        maxPerWithdrawalUnits:
+            BigInt.from(kMaxPerWithdrawalCoins) * BigInt.from(1000000),
+        feeUnits: BigInt.from(kFeeCoins) * BigInt.from(1000000),
+        litoshiPerCoin: kLitoshiPerCoin,
+        displayRate: kDisplayRate,
       ),
       availableBalance: available,
       amountCoins: _amountCoins,
       submitting: _submitting,
-      onSubmit: (BigInt amount, String destinationEmail) => _submit(
-        asset: asset,
+      onSubmit: (BigInt amount, String destination) => _submit(
         amountUnits: amount,
-        destinationEmail: destinationEmail,
+        destination: destination,
       ),
     );
-  }
-}
-
-/// Ativo PADRÃO p/ fallback de display (12.9): usado SOMENTE quando a config
-/// do servidor está ausente/ilegível — o cliente nunca bloqueia o SOLICITAR
-/// por parse local; mínimos/taxas reais são validados pelo backend.
-final PayoutAsset _kFallbackLtc = PayoutAsset(
-  id: 'LTC',
-  network: 'FaucetPayEmail',
-  enabled: true,
-  minWithdrawUnits: BigInt.from(20000000), // 20 COIN (default documentado)
-  feeUnits: BigInt.from(2000000), // 2 COIN
-);
-
-/// Símbolo textual/geométrico simples por ativo (nunca logos oficiais).
-String _symbolFor(String assetId) {
-  switch (assetId.toUpperCase()) {
-    case 'BTC':
-      return 'B';
-    case 'LTC':
-      return 'L';
-    case 'DOGE':
-      return 'D';
-    case 'USDT':
-      return 'T';
-    default:
-      return assetId.isNotEmpty ? assetId[0] : '?';
   }
 }
 

@@ -5,6 +5,7 @@ import 'dive_controller.dart';
 import 'entities.dart';
 import 'formation_controller.dart';
 import 'game_state.dart';
+import 'player_sprite.dart';
 import 'powerups.dart';
 import 'wave_spawner.dart';
 
@@ -67,6 +68,9 @@ abstract final class NovaSwarmPhysics {
   /// input (ver [NovaSwarmInputController]).
   static const double playerMargin = 26;
 
+  /// v3: altura reservada ao HUD no topo — limite superior da nave em Y.
+  static const double playerTopMargin = 72;
+
   /// Pool máximo de partículas simultâneas (performance 60fps).
   static const int maxParticles = 80;
 
@@ -108,7 +112,7 @@ StepResult step(NovaSwarmState s, double dt, {Random? rng}) {
   final Size field = s.fieldSize;
   final NovaSwarmConfig cfg = s.config;
 
-  // ---- Jogador: lerp ao alvo + clamp nas bordas + bank ±10° -------------
+  // ---- Jogador: lerp ao alvo (X e Y) + clamp + bank ±10° -----------------
   final double lerp = NovaSwarmPhysics.frameLerp(dt);
   final double half = NovaSwarmState.playerWidth / 2;
   final double minX = half + NovaSwarmPhysics.playerMargin;
@@ -119,7 +123,24 @@ StepResult step(NovaSwarmState s, double dt, {Random? rng}) {
           .toDouble();
   final double velocity = (s.playerTargetX - s.playerX);
   final double bank = (velocity / 220.0).clamp(-1.0, 1.0) * (10 * pi / 180);
-  final double playerY = s.playerY;
+  // v3: movimento livre em Y — mesmo lerp suave, clamp topo (HUD)..base.
+  final double minY = NovaSwarmPhysics.playerTopMargin + half * 0.5;
+  final double maxY = field.height - half - NovaSwarmPhysics.playerMargin;
+  final double playerY =
+      (s.playerY + (s.playerTargetY - s.playerY) * lerp)
+          .clamp(minY, maxY < minY ? field.height * 0.8 : maxY)
+          .toDouble();
+
+  // TILT do sprite próprio (idle/esquerda/direita): velocidade horizontal
+  // REAL da nave + histerese de ~120ms contra flicker entre estados.
+  final (ShipTilt tilt, double tiltChangedAt) = dt > 0
+      ? advanceShipTilt(
+          current: s.tilt,
+          lastChangeAt: s.tiltChangedAt,
+          vx: (playerX - s.playerX) / dt,
+          elapsed: elapsed,
+        )
+      : (s.tilt, s.tiltChangedAt);
 
   // ---- Starfield ---------------------------------------------------------
   final List<Star> stars = <Star>[];
@@ -553,7 +574,10 @@ StepResult step(NovaSwarmState s, double dt, {Random? rng}) {
     elapsed: elapsed,
     timeLeft: timeLeft,
     playerX: playerX,
+    playerY: playerY,
     playerBank: bank,
+    tilt: tilt,
+    tiltChangedAt: tiltChangedAt,
     lastShotAt: lastShotAt,
     muzzleUntil: muzzleUntil,
     enemies: enemies,

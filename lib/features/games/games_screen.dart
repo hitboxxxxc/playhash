@@ -8,6 +8,7 @@ import '../../core/widgets/empty_state_panel.dart';
 import '../../core/widgets/neon_icons.dart';
 import '../../core/widgets/skeleton_box.dart';
 import '../../data/models/game_model.dart';
+import 'neon_hopper/neon_hopper_screen.dart';
 import 'nova_swarm/nova_swarm_screen.dart';
 import 'widgets/game_card.dart';
 
@@ -26,7 +27,7 @@ class _GamesScreenState extends ConsumerState<GamesScreen>
   /// Registry local de jogos COM implementação no app. Games vindos do
   /// Firestore fora deste conjunto são exibidos como "EM BREVE" com JOGAR
   /// desabilitado — nunca abrem um playfield sem implementação.
-  static const Set<String> _implementedGames = <String>{'nova-swarm'};
+  static const Set<String> _implementedGames = <String>{'nova-swarm', 'neon-hopper'};
 
   static const List<String> _difficulties = <String>[
     'Fácil',
@@ -171,7 +172,10 @@ class _GamesScreenState extends ConsumerState<GamesScreen>
     if (!_implementedGames.contains(game.id)) return;
     Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (BuildContext context) => NovaSwarmScreen(game: game),
+        builder: (BuildContext context) => switch (game.id) {
+          'neon-hopper' => NeonHopperScreen(game: game),
+          _ => NovaSwarmScreen(game: game),
+        },
       ),
     );
   }

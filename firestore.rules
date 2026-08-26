@@ -50,6 +50,35 @@ service cloud.firestore {
       return 'pointsPerKill' in cfg ? cfg.pointsPerKill : 0;
     }
 
+    // ---- Breakdown (neon-hopper em diante) ------------------------------
+    // Games com pointsPerStomp > 0 exigem breakdown {stomps, coins,
+    // flagReached}; o score OFICIAL é recalculado AQUI e comparado ao score
+    // do cliente (espelho EXATO do validateBreakdownScore do runner).
+    function gamePointsPerStomp(gameId) {
+      let cfg = get(/databases/$(database)/documents/games/$(gameId)).data.configuration;
+      return 'pointsPerStomp' in cfg ? cfg.pointsPerStomp : 0;
+    }
+
+    function gameCfgField(gameId, field, fallback) {
+      let cfg = get(/databases/$(database)/documents/games/$(gameId)).data.configuration;
+      return field in cfg ? cfg[field] : fallback;
+    }
+
+    function breakdownValid(gameId, b, score) {
+      return b.keys().hasOnly(['stomps', 'coins', 'flagReached'])
+        && b.stomps is int
+        && b.stomps >= 0
+        && b.stomps <= gameCfgField(gameId, 'maxStomps', 60)
+        && b.coins is int
+        && b.coins >= 0
+        && b.coins <= gameCfgField(gameId, 'maxCoins', 40)
+        && b.flagReached is bool
+        && b.stomps * gameCfgField(gameId, 'pointsPerStomp', 0)
+           + b.coins * gameCfgField(gameId, 'pointsPerCoin', 0)
+           + (b.flagReached ? gameCfgField(gameId, 'flagBonus', 0) : 0)
+           == score;
+    }
+
     // kills consistente com o score: cada abate vale PELO MENOS
     // pointsPerKill (bônus só somam) ⇒ kills × pointsPerKill ≤ score.
     // Espelho EXATO da validação do runner (validateKillsConsistency).
@@ -69,6 +98,16 @@ service cloud.firestore {
     // (contador corrompido por outro writer) NÃO pode lançar erro na
     // comparação `<` ⇒ tratar como permitido (fail-open), igual aos casos
     // doc/chave ausentes. A porta de cota NUNCA nega a PRIMEIRA solicitação.
+    // 12.18 — leitura tolerante de campo de saldo: saldos vivem como STRING
+    // decimal (formato do backend); converte p/ int p/ comparação. Campo
+    // ausente ou tipo inesperado conta como 0 (nunca lança erro).
+    function balInt(d, k) {
+      return !(k in d) ? 0
+        : d[k] is int ? d[k]
+        : d[k] is string ? int(d[k])
+        : 0;
+    }
+
     function dailyQuotaOk(uid, prefix, limit) {
       let k = prefix + '_' + dayKey();
       return !exists(/databases/$(database)/documents/rateLimits/$(uid))
@@ -92,10 +131,22 @@ service cloud.firestore {
       allow delete: if false;
     }
 
-    // ---- Documentos econômicos: SOMENTE LEITURA do dono ---------------
+    // ---- Carteira ------------------------------------------------------
+    // 12.18 — ANTI-INFLAÇÃO: o DONO pode atualizar a própria carteira
+    // SOMENTE se (a) o total disponível+pendente NUNCA AUMENTAR e
+    // (b) lifetimeEarned permanecer intacto. Reserva mantém a soma,
+    // conclusão DIMINUI (dinheiro saiu), estorno mantém. Crédito continua
+    // EXCLUSIVAMENTE pelo runner/Admin SDK (bypassa rules).
     match /wallets/{uid} {
       allow read: if isOwner(uid);
-      allow write: if false;
+      allow update: if isOwner(uid)
+        && balInt(request.resource.data, 'availableBalance')
+           + balInt(request.resource.data, 'pendingBalance')
+           <= balInt(resource.data, 'availableBalance')
+              + balInt(resource.data, 'pendingBalance')
+        && balInt(request.resource.data, 'lifetimeEarned')
+           == balInt(resource.data, 'lifetimeEarned');
+      allow create, delete: if false;
     }
 
     match /power/{uid} {
@@ -190,7 +241,7 @@ service cloud.firestore {
         && resource.data.status == 'open'
         && request.resource.data.status == 'finished'
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(
-             ['status', 'score', 'finishedAt', 'kills'])
+             ['status', 'score', 'finishedAt', 'kills', 'breakdown'])
         && request.resource.data.score is int
         && request.resource.data.score >= 0
         && request.resource.data.score <= gameMaxScore(resource.data.gameId)
@@ -200,6 +251,14 @@ service cloud.firestore {
                 && killsConsistent(resource.data.gameId,
                                    request.resource.data.kills,
                                    request.resource.data.score)))
+        // Breakdown: campos validados contra a config do game; games com
+        // pointsPerStomp > 0 EXIGEM breakdown consistente com o score.
+        && (!('breakdown' in request.resource.data)
+            || breakdownValid(resource.data.gameId,
+                              request.resource.data.breakdown,
+                              request.resource.data.score))
+        && (gamePointsPerStomp(resource.data.gameId) <= 0
+            || 'breakdown' in request.resource.data)
         && withinTolerance(request.resource.data.finishedAt);
 
       allow delete: if false;
@@ -257,42 +316,22 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
-    // ---- Intenções de SAQUE: cliente só CRIA a intenção -----------------
-    // v4 MINIMALISTA NULL-SAFE (12.13): SEM get()/exists() no caminho de
-    // create — cotas, cooldown e antifraude são aplicados SOMENTE no runner
-    // (doc 05 §35–36). O gate anterior (dailyQuotaOk) lia rateLimits via
-    // get() e negava a PRIMEIRA solicitação quando docs/chaves não existiam.
-    // Campos EXATOS {uid, asset, amountUnits, destinationEmail,
-    // destinationMasked, clientRequestId, createdAt, clientVersion};
-    // doc id = clientRequestId (idempotência do retry offline);
-    // destino = E-MAIL FaucetPay (transferência INTERNA — nunca carteira).
-    match /withdrawalIntents/{intentId} {
-      allow read: if isSignedIn()
-        && resource.data.uid == request.auth.uid;
-
-      allow create: if isSignedIn()
-        && request.resource.data.uid == request.auth.uid
-        && request.resource.data.clientRequestId == intentId
-        && request.resource.data.keys().hasOnly(
-             ['uid', 'asset', 'amountUnits', 'destinationEmail',
-              'destinationMasked', 'clientRequestId', 'createdAt',
-              'clientVersion'])
-        && request.resource.data.asset == 'LTC'
-        && request.resource.data.amountUnits is int
-        && request.resource.data.amountUnits > 0
-        && request.resource.data.destinationEmail is string
-        && request.resource.data.destinationEmail.matches('.+@.+[.].+');
-
-      allow update, delete: if false;
-    }
-
-    // ---- Saques: espelho escrito SOMENTE pelo runner (Admin SDK) --------
-    // `address` completo NUNCA sai por aqui: leitura apenas do dono e a UI
-    // exibe addressMasked. Escritas (reserva/payout/estorno) são admin-only.
+    // ---- Saques (12.18/12.20) -------------------------------------------
+    // O CLIENTE grava o resultado do payout feito por ele mesmo (doc id =
+    // clientRequestId). 12.20: status inicial pode ser 'pending' (MODO
+    // MANUAL — operador paga e define 'completed'/'failed' pelo Console,
+    // que BYPASSA rules). destinationMasked SEMPRE mascarado — o destino
+    // completo nunca é persistido aqui. Update/delete NEGADOS ao cliente:
+    // somente o Console/Admin muda o status depois do create.
     match /withdrawals/{withdrawalId} {
       allow read: if isSignedIn()
         && resource.data.uid == request.auth.uid;
-      allow write: if false;
+      allow create: if isSignedIn()
+        && request.resource.data.uid == request.auth.uid
+        && (request.resource.data.status == 'pending'
+            || request.resource.data.status == 'completed'
+            || request.resource.data.status == 'failed');
+      allow update, delete: if false;
     }
 
     // ---- Intenções de RECOMPENSA POR ANÚNCIO: cliente só CRIA a intenção --

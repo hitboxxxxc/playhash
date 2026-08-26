@@ -3,6 +3,7 @@ import 'dart:ui';
 
 import '../../../../data/models/game_model.dart';
 import 'entities.dart';
+import 'player_sprite.dart';
 import 'wave_spawner.dart';
 
 /// Fase da partida dentro da engine.
@@ -108,7 +109,11 @@ class NovaSwarmState {
     double? timeLeft,
     this.playerX = 0,
     this.playerTargetX = 0,
+    double? playerY,
+    double? playerTargetY,
     this.playerBank = 0,
+    this.tilt = ShipTilt.idle,
+    this.tiltChangedAt = -1e9,
     this.invulnUntil = -1,
     this.shooting = false,
     this.lastShotAt = -10,
@@ -139,7 +144,9 @@ class NovaSwarmState {
     this.bannerUntil = -1,
     this.shakeUntil = -1,
     this.endReason,
-  }) : timeLeft = timeLeft ?? config.durationSeconds.toDouble();
+  })  : playerY = playerY ?? fieldSize.height * 0.8,
+        playerTargetY = playerTargetY ?? fieldSize.height * 0.8,
+        timeLeft = timeLeft ?? config.durationSeconds.toDouble();
 
   final NovaSwarmConfig config;
   final Size fieldSize;
@@ -152,7 +159,20 @@ class NovaSwarmState {
   // Jogador
   final double playerX;
   final double playerTargetX;
+
+  /// v3: posição Y REAL do jogador (movimento livre em X e Y).
+  final double playerY;
+
+  /// v3: alvo Y definido pelo toque (lerp suave até lá).
+  final double playerTargetY;
   final double playerBank; // rad, ±10°
+
+  /// Sprite exibido (idle/esquerda/direita) — troca com histerese anti-flicker.
+  final ShipTilt tilt;
+
+  /// Instante (elapsed) da última troca de [tilt].
+  final double tiltChangedAt;
+
   final double invulnUntil; // 1.5s pós-colisão
   final bool shooting;
   final double lastShotAt;
@@ -195,12 +215,8 @@ class NovaSwarmState {
 
   final NovaSwarmEndReason? endReason;
 
-  /// Y fixo do jogador: centro-x na criação, 80% da altura do campo —
-  /// sempre dentro da área visível (independe de insets do dispositivo).
-  double get playerY => fieldSize.height * 0.8;
-
-  /// Largura do sprite do jogador (dp).
-  static const double playerWidth = 52;
+  /// Largura do sprite do jogador (dp) — v3: DOBRO (52 → 104).
+  static const double playerWidth = 104;
 
   /// Hitbox do jogador = 70% do sprite (tolerância generosa).
   double get playerHitboxRadius => playerWidth * 0.35;
@@ -228,7 +244,11 @@ class NovaSwarmState {
     double? timeLeft,
     double? playerX,
     double? playerTargetX,
+    double? playerY,
+    double? playerTargetY,
     double? playerBank,
+    ShipTilt? tilt,
+    double? tiltChangedAt,
     double? invulnUntil,
     bool? shooting,
     double? lastShotAt,
@@ -268,7 +288,11 @@ class NovaSwarmState {
         timeLeft: timeLeft ?? this.timeLeft,
         playerX: playerX ?? this.playerX,
         playerTargetX: playerTargetX ?? this.playerTargetX,
+        playerY: playerY ?? this.playerY,
+        playerTargetY: playerTargetY ?? this.playerTargetY,
         playerBank: playerBank ?? this.playerBank,
+        tilt: tilt ?? this.tilt,
+        tiltChangedAt: tiltChangedAt ?? this.tiltChangedAt,
         invulnUntil: invulnUntil ?? this.invulnUntil,
         shooting: shooting ?? this.shooting,
         lastShotAt: lastShotAt ?? this.lastShotAt,
@@ -370,6 +394,9 @@ NovaSwarmState createInitialState({
     fieldSize: fieldSize,
     playerX: fieldSize.width / 2,
     playerTargetX: fieldSize.width / 2,
+    // v3: Y inicial em 80% da altura (posição clássica), agora móvel.
+    playerY: fieldSize.height * 0.8,
+    playerTargetY: fieldSize.height * 0.8,
     stars: stars,
     enemies: WaveSpawner.spawnWave(
       wave: 1,

@@ -22,21 +22,22 @@ void main() {
         onSubmit: (_, _) {},
       )));
 
-      // Campo do e-mail FaucetPay presente.
-      expect(find.text('E-mail da FaucetPay'), findsOneWidget);
-      // AVISO FIXO sob o campo.
+      // Campo do destino DUPLO presente (12.22).
+      expect(find.text('E-mail ou endereço LTC da FaucetPay'), findsOneWidget);
+      // AVISO FIXO sob o campo (e-mail OU linked address).
       expect(
-        find.textContaining('não use endereço externo de carteira'),
+        find.textContaining('endereço LTC vinculado (linked address)'),
         findsOneWidget,
       );
-      // Card de taxa MINIMALISTA: SOMENTE a taxa da config.
+      // Card de taxa MINIMALISTA: taxa da config local (12.18).
       expect(find.byKey(const ValueKey<String>('fee_line')), findsOneWidget);
       expect(find.text('Taxa: 2 COIN'), findsOneWidget);
-      // NADA de conversão/recebido no card (isso é só no sheet).
-      expect(find.textContaining('Você recebe'), findsNothing);
-      expect(find.textContaining('LTC'), findsNothing);
-      // Rótulo "definidos pelo servidor".
-      expect(find.textContaining('definidos pelo servidor'), findsOneWidget);
+      // Mínimo/teto SEMPRE visíveis (12.18).
+      expect(find.byKey(const ValueKey<String>('min_max_line')), findsOneWidget);
+      // Aviso FaucetPay presente; NUNCA mensagem de cooldown.
+      expect(find.textContaining('FaucetPay'), findsWidgets);
+      expect(find.textContaining('24h'), findsNothing);
+      expect(find.textContaining('intervalo'), findsNothing);
     });
 
     testWidgets('notifier amountCoins acompanha os dígitos digitados',
@@ -53,16 +54,17 @@ void main() {
       await tester.pump();
       expect(amountCoins.value, 10);
 
-      await tester.enterText(find.byType(TextField).last, '25,5');
+      // 12.18: valor em COINS INTEIRAS (teclado numérico/digitsOnly).
+      await tester.enterText(find.byType(TextField).last, '255');
       await tester.pump();
-      expect(amountCoins.value, 25); // floor
+      expect(amountCoins.value, 255);
 
       await tester.enterText(find.byType(TextField).last, '');
       await tester.pump();
       expect(amountCoins.value, 0); // vazio = 0
     });
 
-    testWidgets('e-mail inválido bloqueia o submit localmente',
+    testWidgets('destino inválido bloqueia o submit localmente',
         (WidgetTester tester) async {
       bool submitted = false;
       await tester.pumpWidget(_wrap(WithdrawForm(
@@ -72,15 +74,39 @@ void main() {
       )));
 
       await tester.enterText(
-        find.widgetWithText(TextField, 'E-mail da FaucetPay'),
-        'e-mail-invalido',
+        find.widgetWithText(TextField, 'E-mail ou endereço LTC da FaucetPay'),
+        'destino-invalido',
       );
       await tester.enterText(find.byType(TextField).last, '20');
       await tester.tap(find.byKey(const ValueKey<String>('submit_withdraw')));
       await tester.pump();
 
       expect(submitted, isFalse);
-      expect(find.text('E-mail inválido.'), findsOneWidget);
+      expect(
+        find.text('Destino inválido: use um e-mail FaucetPay ou um '
+            'endereço LTC.'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('endereço LTC válido é aceito no submit (12.22)',
+        (WidgetTester tester) async {
+      String? submittedDest;
+      await tester.pumpWidget(_wrap(WithdrawForm(
+        asset: _ltc,
+        availableBalance: BigInt.from(100000000),
+        onSubmit: (BigInt amount, String dest) => submittedDest = dest,
+      )));
+
+      await tester.enterText(
+        find.widgetWithText(TextField, 'E-mail ou endereço LTC da FaucetPay'),
+        'LTCMPogVJZPW8W4bC2eSFUdfnGGaPVS4JK',
+      );
+      await tester.enterText(find.byType(TextField).last, '20');
+      await tester.tap(find.byKey(const ValueKey<String>('submit_withdraw')));
+      await tester.pump();
+
+      expect(submittedDest, 'LTCMPogVJZPW8W4bC2eSFUdfnGGaPVS4JK');
     });
 
     testWidgets('submit válido entrega valor + e-mail ao callback',
@@ -97,7 +123,7 @@ void main() {
       )));
 
       await tester.enterText(
-        find.widgetWithText(TextField, 'E-mail da FaucetPay'),
+        find.widgetWithText(TextField, 'E-mail ou endereço LTC da FaucetPay'),
         'owner@example.com',
       );
       await tester.enterText(find.byType(TextField).last, '58');
@@ -117,7 +143,7 @@ void main() {
       )));
 
       await tester.enterText(
-        find.widgetWithText(TextField, 'E-mail da FaucetPay'),
+        find.widgetWithText(TextField, 'E-mail ou endereço LTC da FaucetPay'),
         'owner@example.com',
       );
       await tester.enterText(find.byType(TextField).last, '10');

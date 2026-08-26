@@ -6,11 +6,14 @@ import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/theme/chamfered_border.dart';
 import '../../../data/models/game_model.dart';
+import '../neon_hopper/engine/renderer.dart';
+import '../nova_swarm/engine/player_sprite.dart';
 import '../nova_swarm/engine/renderer.dart';
 
-/// Card do catálogo JOGAR: thumbnail 100% desenhada em código (mini cena
-/// estrelada + nave ciano), nome, chip de dificuldade, melhor score próprio
-/// e recompensa ESTIMADA derivada SOMENTE da config recebida do backend.
+/// Card do catálogo JOGAR: thumbnail (capa própria para NOVA SWARM; demais
+/// jogos mantêm a mini cena desenhada em código), nome, chip de dificuldade,
+/// melhor score próprio e recompensa ESTIMADA derivada SOMENTE da config
+/// recebida do backend.
 class GameCard extends ConsumerWidget {
   const GameCard({
     super.key,
@@ -30,6 +33,17 @@ class GameCard extends ConsumerWidget {
     'easy': ('FÁCIL', AppColors.green),
     'medium': ('MÉDIO', AppColors.gold),
     'hard': ('DIFÍCIL', AppColors.error),
+  };
+
+  /// Thumbnail por jogo: arte PRÓPRIA (capa) quando existir; painter próprio
+  /// em código quando definido; fallback = mini cena NOVA SWARM.
+  static const Map<String, String> _thumbnailAssets = <String, String>{
+    'nova-swarm': PlayerShipSprites.capa,
+  };
+
+  /// Painters de thumbnail DESENHADOS EM CÓDIGO (zero assets).
+  static const Map<String, CustomPainter> _thumbnailPainters = <String, CustomPainter>{
+    'neon-hopper': NeonHopperThumbPainter(),
   };
 
   @override
@@ -58,10 +72,22 @@ class GameCard extends ConsumerWidget {
                   Positioned.fill(
                     child: ClipPath(
                       clipper: _ChamferClipper(),
-                      child: CustomPaint(
-                        painter: NovaSwarmThumbPainter(),
-                        isComplex: true,
-                      ),
+                      child: _thumbnailAssets[game.id] != null
+                          // CAPA INTEIRA (sem crop): contain + letterbox
+                          // discreto sobre o fundo da própria moldura.
+                          ? ColoredBox(
+                              color: AppColors.surface,
+                              child: Image.asset(
+                                _thumbnailAssets[game.id]!,
+                                fit: BoxFit.contain,
+                                filterQuality: FilterQuality.medium,
+                              ),
+                            )
+                          : CustomPaint(
+                              painter: _thumbnailPainters[game.id] ??
+                                  NovaSwarmThumbPainter(),
+                              isComplex: true,
+                            ),
                     ),
                   ),
                   if (!implemented)

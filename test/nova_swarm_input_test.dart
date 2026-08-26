@@ -51,6 +51,7 @@ class _FakeSessionsRepo implements GameSessionsRepositoryApi {
     required String sessionId,
     required int score,
     int? kills,
+    Map<String, dynamic>? breakdown,
   }) async {}
 
   @override

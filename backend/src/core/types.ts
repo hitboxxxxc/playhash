@@ -74,6 +74,19 @@ export interface GameConfiguration {
   powerFormula: string;
   /** Pontos por abate (0 = game sem contagem de inimigos). */
   pointsPerKill: number;
+  // ---- Breakdown (neon-hopper em diante) -----------------------------------
+  // Games com pointsPerStomp > 0 exigem breakdown {stomps, coins, flagReached};
+  // o score OFICIAL é recalculado no servidor e comparado ao score do cliente.
+  /** Pontos por pisão em inimigo (0 = game sem breakdown). */
+  pointsPerStomp: number;
+  /** Pontos por moeda coletada. */
+  pointsPerCoin: number;
+  /** Bônus ao alcançar a bandeira final. */
+  flagBonus: number;
+  /** Teto absoluto de stomps aceito na sessão (anti-flood). */
+  maxStomps: number;
+  /** Teto absoluto de moedas aceito na sessão (anti-flood). */
+  maxCoins: number;
 }
 
 export interface GameDoc {

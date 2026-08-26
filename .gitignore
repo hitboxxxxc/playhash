@@ -54,4 +54,8 @@ node_modules/
 android/app/google-services.json
 *.jks
 key.properties
-signing_report.txt  
+signing_report.txt
+
+# Chave de payout FaucetPay (12.18) — SOMENTE local; exemplo commitado é
+# payout_config.example.dart (sem chave). NUNCA remover esta linha.
+lib/core/config/payout_config.dart

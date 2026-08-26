@@ -55,6 +55,11 @@ class GameConfig {
     required this.powerFormula,
     this.diverKillBonus = 50,
     this.coinBonus = 250,
+    // Breakdown (neon-hopper em diante): score OFICIAL = f(breakdown) no
+    // backend; aqui são usados só para EXIBIÇÃO da pontuação na partida.
+    this.pointsPerStomp = 0,
+    this.pointsPerCoin = 0,
+    this.flagBonus = 0,
     this.diveIntervalSeconds = 3.0,
     this.diveIntervalMinSeconds = 1.2,
     this.diveRampPerWave = 0.05,
@@ -86,6 +91,9 @@ class GameConfig {
   // ---- v2: comportamento (paridade com a referência) ----------------------
   final int diverKillBonus; // +50 por abate de diver
   final int coinBonus; // +250 por moeda
+  final int pointsPerStomp; // pontos por pisão (0 = game sem breakdown)
+  final int pointsPerCoin; // pontos por moeda
+  final int flagBonus; // bônus da bandeira final
   final double diveIntervalSeconds; // intervalo base entre mergulhos
   final double diveIntervalMinSeconds; // piso do intervalo (rampa)
   final double diveRampPerWave; // redução do intervalo por wave
@@ -131,6 +139,9 @@ class GameConfig {
       powerFormula: (map['powerFormula'] as String?) ?? '',
       diverKillBonus: _int(map['diverKillBonus']),
       coinBonus: _int(map['coinBonus']),
+      pointsPerStomp: _int(map['pointsPerStomp']),
+      pointsPerCoin: _int(map['pointsPerCoin']),
+      flagBonus: _int(map['flagBonus']),
       diveIntervalSeconds: _dbl(map['diveIntervalSeconds']),
       diveIntervalMinSeconds: _dbl(map['diveIntervalMinSeconds']),
       diveRampPerWave: _dbl(map['diveRampPerWave']),

@@ -39,7 +39,7 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  testWidgets('exibe taxa e mínimo vindos da config fake do servidor',
+  testWidgets('exibe taxa da config local + mínimo/teto visíveis (12.18)',
       (WidgetTester tester) async {
     await pumpForm(
       tester,
@@ -48,9 +48,10 @@ void main() {
     );
 
     expect(find.textContaining('Taxa: 2'), findsOneWidget);
-    expect(find.textContaining('definidos pelo servidor'), findsOneWidget);
+    expect(find.byKey(const ValueKey<String>('min_max_line')), findsOneWidget);
     expect(find.text('SOLICITAR SAQUE'), findsOneWidget);
-    expect(find.textContaining('até 5 minutos'), findsOneWidget);
+    expect(find.textContaining('FaucetPay'), findsWidgets);
+    expect(find.textContaining('24h'), findsNothing);
   });
 
   testWidgets('MÁX. preenche o campo com o saldo disponível',

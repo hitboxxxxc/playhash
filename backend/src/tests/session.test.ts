@@ -35,6 +35,11 @@ const GAME = {
     powerCapPerSessionBaseUnits: 0,
     powerFormula: '',
     pointsPerKill: 0,
+    pointsPerStomp: 0,
+    pointsPerCoin: 0,
+    flagBonus: 0,
+    maxStomps: 0,
+    maxCoins: 0,
   },
 };
 
@@ -59,6 +64,11 @@ const NOVA_SWARM = {
     maxExpectedScore: 12_000,
     powerCapPerSessionBaseUnits: 100_000,
     powerFormula: 'linear_cap',
+    pointsPerStomp: 0,
+    pointsPerCoin: 0,
+    flagBonus: 0,
+    maxStomps: 0,
+    maxCoins: 0,
   },
 };
 
@@ -194,6 +204,11 @@ describe('validateGameSession', () => {
         powerCapPerSessionBaseUnits: 0,
         powerFormula: '',
         pointsPerKill: 0,
+        pointsPerStomp: 0,
+        pointsPerCoin: 0,
+        flagBonus: 0,
+        maxStomps: 0,
+        maxCoins: 0,
       },
     };
     // floor(500 × 1000 / 1000) = 500

@@ -130,18 +130,26 @@ class GameSessionService {
   }
 
   /// Envia o score (update único open→finished). `kills` é opcional e
-  /// validado pelo backend (kills × pointsPerKill ≤ score). Retry seguro: se
-  /// o update chegou ao servidor mas a resposta se perdeu, a nova tentativa
-  /// encontra a sessão finished e é tratada como sucesso.
+  /// validado pelo backend (kills × pointsPerKill ≤ score). `breakdown` é
+  /// opcional (neon-hopper em diante): mapa EXATO {stomps, coins, flagReached}
+  /// — o score OFICIAL é recalculado pelo backend a partir dele. Retry
+  /// seguro: se o update chegou ao servidor mas a resposta se perdeu, a nova
+  /// tentativa encontra a sessão finished e é tratada como sucesso.
   Future<void> finishSession({
     required String sessionId,
     required int score,
     int? kills,
+    Map<String, dynamic>? breakdown,
   }) async {
     Object? lastError;
     for (int attempt = 0; attempt < maxFinishAttempts; attempt++) {
       try {
-        await _repository.finishSession(sessionId: sessionId, score: score, kills: kills);
+        await _repository.finishSession(
+          sessionId: sessionId,
+          score: score,
+          kills: kills,
+          breakdown: breakdown,
+        );
         return;
       } on FirebaseException catch (e) {
         if (e.code == 'permission-denied') {

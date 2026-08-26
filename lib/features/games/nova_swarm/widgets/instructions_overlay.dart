@@ -5,11 +5,12 @@ import '../../../../core/theme/app_theme.dart';
 import '../../../../core/widgets/neon_button.dart';
 import '../../../../core/widgets/neon_panel.dart';
 import '../../../../data/models/game_model.dart';
+import '../engine/player_sprite.dart';
 
 /// Overlay de instruções (painel chanfrado): título, como jogar, regras da
 /// config recebida e botão INICIAR — que cria a SESSÃO no Firestore ANTES
 /// do play. Estados: ocioso / criando sessão / erro seguro PT-BR.
-class InstructionsOverlay extends StatelessWidget {
+class InstructionsOverlay extends StatefulWidget {
   const InstructionsOverlay({
     super.key,
     required this.game,
@@ -29,7 +30,31 @@ class InstructionsOverlay extends StatelessWidget {
   final VoidCallback? onBack;
 
   @override
+  State<InstructionsOverlay> createState() => _InstructionsOverlayState();
+}
+
+class _InstructionsOverlayState extends State<InstructionsOverlay> {
+  bool _precached = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // PRECACHE dos sprites da nave + capa do card: troca instantânea de
+    // tilt e thumbnail sem pop de carregamento. (didChangeDependencies:
+    // precacheImage lê o MediaQuery — não pode rodar em initState.)
+    if (!_precached) {
+      _precached = true;
+      for (final String path in PlayerShipSprites.all) {
+        precacheImage(AssetImage(path), context);
+      }
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final GameModel game = widget.game;
+    final String? error = widget.error;
+    final VoidCallback? onBack = widget.onBack;
     final GameConfig cfg = game.configuration;
     return Center(
       child: SingleChildScrollView(
@@ -77,7 +102,7 @@ class InstructionsOverlay extends StatelessWidget {
               const SizedBox(height: 20),
               if (error != null) ...<Widget>[
                 Text(
-                  error!,
+                  error,
                   textAlign: TextAlign.center,
                   style: const TextStyle(color: AppColors.error, fontSize: 13),
                 ),
@@ -85,8 +110,8 @@ class InstructionsOverlay extends StatelessWidget {
               ],
               NeonButton(
                 label: 'INICIAR',
-                onPressed: onStart,
-                isLoading: isLoading,
+                onPressed: widget.onStart,
+                isLoading: widget.isLoading,
               ),
               if (error != null && onBack != null) ...<Widget>[
                 const SizedBox(height: 10),

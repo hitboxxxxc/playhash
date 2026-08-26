@@ -13,14 +13,17 @@ abstract interface class GameSessionsRepositoryApi {
     required String clientVersion,
   });
 
-  /// Fecha a sessão num ÚNICO update open→finished {score, kills,
+  /// Fecha a sessão num ÚNICO update open→finished {score, kills, breakdown,
   /// finishedAt}. `kills` é OPCIONAL (games sem contagem de inimigos não
-  /// enviam). Idempotente: se já estiver finished (retry pós-instabilidade),
-  /// trata como sucesso.
+  /// enviam). `breakdown` é OPCIONAL (neon-hopper em diante): mapa EXATO
+  /// {stomps:int, coins:int, flagReached:bool} — o score OFICIAL é
+  /// recalculado pelo backend a partir dele (doc 05 §12/§51). Idempotente:
+  /// se já estiver finished (retry pós-instabilidade), trata como sucesso.
   Future<void> finishSession({
     required String sessionId,
     required int score,
     int? kills,
+    Map<String, dynamic>? breakdown,
   });
 
   /// Observa o doc da própria sessão (processed/serverResult do backend).
@@ -69,6 +72,7 @@ class GameSessionsRepository implements GameSessionsRepositoryApi {
     required String sessionId,
     required int score,
     int? kills,
+    Map<String, dynamic>? breakdown,
   }) async {
     final DocumentReference<Map<String, dynamic>> ref = _sessions.doc(sessionId);
     try {
@@ -76,6 +80,7 @@ class GameSessionsRepository implements GameSessionsRepositoryApi {
         'status': 'finished',
         'score': score,
         'kills': ?kills,
+        'breakdown': ?breakdown,
         'finishedAt': FieldValue.serverTimestamp(),
       });
     } on FirebaseException catch (e) {
