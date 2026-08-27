@@ -265,50 +265,27 @@ service cloud.firestore {
     }
 
     // ---- Intenções de compra: cliente só CRIA a intenção ----------------
-    match /purchaseIntents/{intentId} {
-      allow read: if isSignedIn()
-        && resource.data.uid == request.auth.uid;
-
-      allow create: if isSignedIn()
+    // MINIMALISTA (doc 05 §35/§51): rules validam DONO+FORMATO; economia
+    // (catálogo, status, quota, tolerância, size limits) é validada
+    // SOMENTE no runner. update/delete do cliente são negados.
+    match /purchaseIntents/{id} {
+      allow create: if (request.auth != null
         && request.resource.data.uid == request.auth.uid
+        && request.resource.data.clientRequestId == id
         && request.resource.data.keys().hasOnly(
-             ['uid', 'machineId', 'clientRequestId', 'createdAt', 'status'])
-        && request.resource.data.status == 'pending'
-        && request.resource.data.machineId is string
-        && request.resource.data.machineId.size() > 0
-        && request.resource.data.machineId.size() <= 64
-        && request.resource.data.clientRequestId is string
-        && request.resource.data.clientRequestId.size() >= 8
-        && request.resource.data.clientRequestId.size() <= 128
-        && withinTolerance(request.resource.data.createdAt)
-        && exists(/databases/$(database)/documents/config/catalog/machines/$(request.resource.data.machineId))
-        && get(/databases/$(database)/documents/config/catalog/machines/$(request.resource.data.machineId)).data.enabled == true
-        && dailyQuotaOk(request.auth.uid, 'pi', 20);
-
-      allow update, delete: if false;
+             ['uid', 'machineId', 'clientRequestId', 'createdAt', 'status']));
+      allow read: if request.auth != null && resource.data.uid == request.auth.uid;
     }
 
     // ---- Intenções de upgrade de máquina: cliente só CRIA a intenção ----
-    match /machineUpgradeIntents/{intentId} {
-      allow read: if isSignedIn()
-        && resource.data.uid == request.auth.uid;
-
-      allow create: if isSignedIn()
+    // MINIMALISTA (doc 05 §35/§51): mesmas chaves; runner decide economia.
+    match /machineUpgradeIntents/{id} {
+      allow create: if (request.auth != null
         && request.resource.data.uid == request.auth.uid
+        && request.resource.data.clientRequestId == id
         && request.resource.data.keys().hasOnly(
-             ['uid', 'machineId', 'clientRequestId', 'createdAt', 'status'])
-        && request.resource.data.status == 'pending'
-        && request.resource.data.machineId is string
-        && request.resource.data.machineId.size() > 0
-        && request.resource.data.machineId.size() <= 64
-        && request.resource.data.clientRequestId == intentId
-        && request.resource.data.clientRequestId.size() >= 8
-        && request.resource.data.clientRequestId.size() <= 128
-        && withinTolerance(request.resource.data.createdAt)
-        && exists(/databases/$(database)/documents/config/catalog/machines/$(request.resource.data.machineId))
-        && get(/databases/$(database)/documents/config/catalog/machines/$(request.resource.data.machineId)).data.enabled == true;
-
-      allow update, delete: if false;
+             ['uid', 'machineId', 'clientRequestId', 'createdAt', 'status']));
+      allow read: if request.auth != null && resource.data.uid == request.auth.uid;
     }
 
     // ---- Claims (missões/conquistas): cliente só CRIA a intenção --------

@@ -200,17 +200,17 @@ void main() {
     expect(find.text('LOJA'), findsOneWidget);
     expect(find.text('SALA'), findsOneWidget);
 
-    // Máquinas do catálogo: 1 owned (NÍVEL 1 / MELHORAR) + 1 não owned
-    // (DESBLOQUEAR).
+    // Máquinas do catálogo: 1 owned (NÍVEL 1 / APRIMORAR) + 1 não owned
+    // (COMPRAR).
     expect(find.text('RIG SCRAP'), findsOneWidget);
     expect(find.text('RIG NOVA'), findsOneWidget);
-    expect(find.textContaining('MELHORAR'), findsOneWidget);
-    expect(find.text('DESBLOQUEAR'), findsWidgets); // 2 máquinas, 1 owned + 1 not owned
+    expect(find.textContaining('APRIMORAR'), findsOneWidget);
+    expect(find.text('COMPRAR'), findsWidgets); // 2 máquinas, 1 owned + 1 not owned
     expect(find.text('ATIVA'), findsOneWidget);
     expect(find.text('INATIVA'), findsOneWidget);
   });
 
-  testWidgets('SALA: botão DESBLOQUEAR dispara fluxo de compra existente',
+  testWidgets('SALA: botão COMPRAR dispara fluxo de compra existente',
       (WidgetTester tester) async {
     final _FakePurchaseService service = _FakePurchaseService();
     await tester.pumpWidget(
@@ -236,7 +236,7 @@ void main() {
 
     expect(service.called, isFalse);
 
-    // Toca no botão DESBLOQUEAR (último PixelButton = máquina não owned).
+    // Toca no botão COMPRAR (último PixelButton = máquina não owned).
     final List<Widget> buttons = find.byType(PixelButton).evaluate().map<Widget>((Element e) => e.widget as Widget).toList();
     expect(buttons.length, greaterThanOrEqualTo(1));
     await tester.tap(find.byWidget(buttons.last));
@@ -246,7 +246,7 @@ void main() {
     expect(service.called, isTrue);
   });
 
-  testWidgets('SALA: botão MELHORAR presente para máquina owned',
+  testWidgets('SALA: botão APRIMORAR presente para máquina owned',
       (WidgetTester tester) async {
     await _pumpSala(
       tester,
@@ -260,7 +260,7 @@ void main() {
         ),
       ],
     );
-    expect(find.textContaining('MELHORAR'), findsOneWidget);
+    expect(find.textContaining('APRIMORAR'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

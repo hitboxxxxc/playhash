@@ -588,7 +588,7 @@ class _PixelSalaScreenState extends ConsumerState<PixelSalaScreen> {
                                       SizedBox(
                                         height: 36,
                                         child: PixelButton(
-                                          label: 'MELHORAR',
+                                          label: 'APRIMORAR',
                                           style: PixelButtonStyle.green,
                                           full: true,
                                           onPressed: () =>
@@ -616,7 +616,7 @@ class _PixelSalaScreenState extends ConsumerState<PixelSalaScreen> {
                                       SizedBox(
                                         height: 36,
                                         child: PixelButton(
-                                          label: 'DESBLOQUEAR',
+                                          label: 'COMPRAR',
                                           style: PixelButtonStyle.purple,
                                           full: true,
                                           onPressed: () =>
