@@ -11,6 +11,8 @@ import '../../core/theme/app_theme.dart';
 import '../../data/models/wallet_model.dart';
 import '../../data/repositories/payouts_repository.dart'
     show RewardHistoryEntry, WithdrawalModel;
+import '../../core/widgets/next_block_countdown.dart' show NextBlockCountdown;
+import '../../data/repositories/mining_repository.dart';
 import 'widgets/wallet_header.dart';
 import 'widgets/wallet_history_list.dart';
 import 'widgets/withdraw_confirm_sheet.dart';
@@ -36,10 +38,39 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
   /// a conversão EM TEMPO REAL do sheet de confirmação (apresentação).
   final ValueNotifier<int> _amountCoins = ValueNotifier<int>(0);
 
+  /// Snapshot oficial de bloco — alimenta o countdown da carteira (mesma fonte
+  /// da home/mineração antiga). Tolerante a backend ausente: falha => null.
+  BlockSnapshot? _block;
+  StreamSubscription<BlockSnapshot?>? _blockSub;
+
+  @override
+  void initState() {
+    super.initState();
+    _subscribeBlock();
+  }
+
   @override
   void dispose() {
     _amountCoins.dispose();
+    _blockSub?.cancel();
     super.dispose();
+  }
+
+  /// Stream do bloco em tempo real — MESMO padrão da home antiga.
+  /// Falha => null (estado vazio — nunca quebra a tela).
+  void _subscribeBlock() {
+    try {
+      _blockSub ??= ref
+          .read(miningRepositoryProvider)
+          .watchBlockSnapshot()
+          .listen(
+            (BlockSnapshot? block) {
+              if (!mounted) return;
+              setState(() => _block = block);
+            },
+            onError: (Object _) {/* estado vazio — nunca quebra a tela */},
+          );
+    } catch (_) {/* sem backend => "--:--" */}
   }
 
   void _showDepositInfoSheet() {
@@ -264,6 +295,17 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
                     availableBalance: w?.availableBalance ?? BigInt.zero,
                     pendingBalance: w?.pendingBalance ?? BigInt.zero,
                     lifetimeEarned: w?.lifetimeEarned ?? BigInt.zero,
+                  ),
+                ),
+                // Cronômetro ABAIXO do card de saldo (MESMA widget da home
+                // antiga — `blocks/current`, ticker 1s, "--:--" sem schedule).
+                Padding(
+                  padding: const EdgeInsets.only(top: 10, left: 4, right: 4),
+                  child: NextBlockCountdown(
+                    block: _block,
+                    label: 'Próxima recompensa em',
+                    fontSize: 12,
+                    centered: false,
                   ),
                 ),
                 Align(

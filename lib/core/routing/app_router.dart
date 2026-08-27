@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../features/achievements/achievements_screen.dart';
@@ -9,7 +10,7 @@ import '../../features/auth/login_screen.dart';
 import '../../features/auth/register_screen.dart';
 import '../../features/common/coming_soon_screen.dart';
 import '../../features/games/games_screen.dart';
-import '../../features/home/home_screen.dart';
+import '../../features/home/pixel_home_screen.dart';
 import '../../features/leagues/leagues_screen.dart';
 import '../../features/missions/missions_screen.dart';
 import '../../features/profile/account_screen.dart';
@@ -18,8 +19,10 @@ import '../../features/season_pass/season_screen.dart';
 import '../../features/wallet/wallet_screen.dart';
 import '../../features/settings/settings_screen.dart';
 import '../../features/splash/auth_gate.dart';
+import '../providers.dart';
 import '../services/auth_service.dart';
 import '../widgets/pixel_shell.dart';
+import '../../data/models/wallet_model.dart';
 
 /// Caminhos de rota — fonte única de verdade para navegação.
 abstract final class RoutePaths {
@@ -129,24 +132,40 @@ GoRouter createAppRouter({AuthServiceApi? auth, String? initialLocation}) {
       GoRoute(
         path: '/app',
         builder: (BuildContext context, GoRouterState state) {
-          return PixelShell(
-            balanceText: '—',
-            pages: const [
-              HomeScreen(),
-              _SalaPlaceholder(),
-              GamesScreen(),
-              WalletScreen(),
-            ],
-            menuItems: [
-              PixelMenuItem(label: 'Mineração', onTap: () => context.push(RoutePaths.mining)),
-              PixelMenuItem(label: 'Loja', onTap: () => context.push(RoutePaths.store)),
-              PixelMenuItem(label: 'Missões', onTap: () => context.push(RoutePaths.missions)),
-              PixelMenuItem(label: 'Conquistas', onTap: () => context.push(RoutePaths.achievements)),
-              PixelMenuItem(label: 'Ligas', onTap: () => context.push(RoutePaths.leagues)),
-              PixelMenuItem(label: 'Temporada', onTap: () => context.push(RoutePaths.season)),
-              PixelMenuItem(label: 'Perfil', onTap: () => context.push(RoutePaths.profile)),
-              PixelMenuItem(label: 'Configurações', onTap: () => context.push(RoutePaths.settings)),
-            ],
+          final ValueNotifier<int> shellIndex = ValueNotifier(0);
+          return Consumer(
+            builder: (BuildContext context, WidgetRef ref, Widget? child) {
+              // Saldo real no topo — MESMO padrão do chip de saldo da home
+              // antiga: coins = availableBalance ~/ 1000000 (1 coin = 1e6
+              // unidades mínimas). Sem dado => "—".
+              final AsyncValue<WalletModel?> walletAsync =
+                  ref.watch(walletStreamProvider);
+              final WalletModel? wallet = walletAsync.value;
+              final String balanceText = wallet?.availableBalance == null
+                  ? '—'
+                  : (wallet!.availableBalance ~/ BigInt.from(1000000))
+                      .toString();
+              return PixelShell(
+                balanceText: balanceText,
+                indexNotifier: shellIndex,
+                pages: [
+                  PixelHomeScreen(onPlayGames: () => shellIndex.value = 2),
+                  const _SalaPlaceholder(),
+                  const GamesScreen(),
+                  const WalletScreen(),
+                ],
+                menuItems: [
+                  PixelMenuItem(label: 'Mineração', onTap: () => context.push(RoutePaths.mining)),
+                  PixelMenuItem(label: 'Loja', onTap: () => context.push(RoutePaths.store)),
+                  PixelMenuItem(label: 'Missões', onTap: () => context.push(RoutePaths.missions)),
+                  PixelMenuItem(label: 'Conquistas', onTap: () => context.push(RoutePaths.achievements)),
+                  PixelMenuItem(label: 'Ligas', onTap: () => context.push(RoutePaths.leagues)),
+                  PixelMenuItem(label: 'Temporada', onTap: () => context.push(RoutePaths.season)),
+                  PixelMenuItem(label: 'Perfil', onTap: () => context.push(RoutePaths.profile)),
+                  PixelMenuItem(label: 'Configurações', onTap: () => context.push(RoutePaths.settings)),
+                ],
+              );
+            },
           );
         },
       ),
