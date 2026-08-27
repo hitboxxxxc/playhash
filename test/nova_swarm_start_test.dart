@@ -49,6 +49,7 @@ class _FakeSessionsRepo implements GameSessionsRepositoryApi {
     required String uid,
     required String gameId,
     required String clientVersion,
+    String? clientRequestId,
   }) async {
     createCalls++;
     if (hangCreate) return Completer<String>().future;

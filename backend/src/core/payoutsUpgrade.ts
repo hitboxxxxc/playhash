@@ -77,12 +77,16 @@ export const PAYOUTS_ASSET_V3: Record<string, Record<string, unknown>> = {
     rateSource: 'fixed',
     litoshiPerCoin: 100,
     displayRate: '1 COIN = 0,000001 LTC',
-    minWithdrawCoins: 20,
-    feeCoins: 2,
+    minWithdrawCoins: 50,
+    feeCoins: 25,
+    subscriber: {
+      minWithdrawCoins: 10,
+      feeCoins: 0,
+    },
     providerMinLitoshi: null, // preencher via payoutProbe (mínimo real)
     // Compat numérica (units de coin; 1 coin = 1e6 units):
-    minWithdrawUnits: 20_000_000, // 20 coins
-    feeUnits: 2_000_000, // 2 coins
+    minWithdrawUnits: 50_000_000, // 50 coins
+    feeUnits: 25_000_000, // 25 coins
     assetDecimals: 8,
     assetUnitPerCoinScaled: 100, // 1 coin = 100 litoshi (mesma taxa fixa)
     providerMinAssetUnits: 0, // v3 usa providerMinLitoshi
@@ -119,6 +123,10 @@ export interface PayoutAssetV4 {
   litoshiPerCoin: number;
   minWithdrawCoins: number;
   feeCoins: number;
+  subscriber?: {
+    minWithdrawCoins: number;
+    feeCoins: number;
+  };
   /** Mínimo REAL do provedor em litoshi; null até o probe confirmar. */
   providerMinLitoshi: number | null;
   displayRate: string;
@@ -139,7 +147,7 @@ export const PAYOUTS_V4_META: Record<string, unknown> = {
  *  - a plataforma nunca enviaria abaixo disso de qualquer forma (mínimo);
  *  - se o provedor rejeitar de verdade ⇒ erro tipado BELOW_MIN + estorno.
  */
-export const FALLBACK_PROVIDER_MIN_LITOSHI = 1800;
+export const FALLBACK_PROVIDER_MIN_LITOSHI = 2500;
 
 /**
  * MERGE SEGURO do mínimo confirmado pelo payoutProbe (12.10): parte do doc
@@ -170,8 +178,12 @@ export const PAYOUTS_ASSET_V4: Record<string, PayoutAssetV4> = {
   LTC: {
     enabled: true,
     litoshiPerCoin: 100,
-    minWithdrawCoins: 20,
-    feeCoins: 2,
+    minWithdrawCoins: 50,
+    feeCoins: 25,
+    subscriber: {
+      minWithdrawCoins: 10,
+      feeCoins: 0,
+    },
     providerMinLitoshi: null,
     displayRate: '1 COIN = 0,000001 LTC',
     destinationType: 'faucetpay_email',
@@ -181,6 +193,7 @@ export const PAYOUTS_ASSET_V4: Record<string, PayoutAssetV4> = {
     litoshiPerCoin: 0,
     minWithdrawCoins: 0,
     feeCoins: 0,
+    subscriber: { minWithdrawCoins: 0, feeCoins: 0 },
     providerMinLitoshi: null,
     displayRate: '',
     destinationType: 'faucetpay_email',
@@ -190,6 +203,7 @@ export const PAYOUTS_ASSET_V4: Record<string, PayoutAssetV4> = {
     litoshiPerCoin: 0,
     minWithdrawCoins: 0,
     feeCoins: 0,
+    subscriber: { minWithdrawCoins: 0, feeCoins: 0 },
     providerMinLitoshi: null,
     displayRate: '',
     destinationType: 'faucetpay_email',
@@ -199,6 +213,7 @@ export const PAYOUTS_ASSET_V4: Record<string, PayoutAssetV4> = {
     litoshiPerCoin: 0,
     minWithdrawCoins: 0,
     feeCoins: 0,
+    subscriber: { minWithdrawCoins: 0, feeCoins: 0 },
     providerMinLitoshi: null,
     displayRate: '',
     destinationType: 'faucetpay_email',
@@ -251,17 +266,34 @@ export function normalizePayoutsDoc(
     const canonical = PAYOUTS_ASSET_V4[id];
     const enabled = a.enabled === true;
     const litoshiPerCoin = toInt(a.litoshiPerCoin ?? a.assetUnitPerCoinScaled ?? 0);
-    const minWithdrawCoins = toInt(a.minWithdrawCoins ?? Math.floor(toInt(a.minWithdrawUnits ?? 0) / 1_000_000));
-    const feeCoins = toInt(a.feeCoins ?? Math.floor(toInt(a.feeUnits ?? 0) / 1_000_000));
+    // NOVOS campos v3/v4 têm precedência; se ausentes, usa canônico (NÃO converte
+    // units legados ⇒ evita propagar mínimos/taxas antigos).
+    const hasMinWithdrawCoins = typeof a.minWithdrawCoins === 'number';
+    const hasFeeCoins = typeof a.feeCoins === 'number';
+    const minWithdrawCoins = hasMinWithdrawCoins
+      ? toInt(a.minWithdrawCoins)
+      : (enabled ? canonical?.minWithdrawCoins ?? 50 : 0);
+    const feeCoins = hasFeeCoins
+      ? toInt(a.feeCoins)
+      : (enabled ? canonical?.feeCoins ?? 25 : 0);
+    const sub = (a.subscriber as Record<string, unknown> | undefined) ?? {};
+    const subMin = toInt(sub.minWithdrawCoins);
+    const subFee = toInt(sub.feeCoins);
+    const canonicalSub = canonical?.subscriber ?? (id === 'LTC' ? { minWithdrawCoins: 10, feeCoins: 0 } : { minWithdrawCoins: 0, feeCoins: 0 });
     const rawMin = a.providerMinLitoshi;
     assets[id] = {
       enabled,
       // Ativo desabilitado sem números ⇒ herda o canônico (zeros); habilitado
       // sem conversão definida ⇒ mantém o que veio (processador recusa se 0).
       litoshiPerCoin: litoshiPerCoin || canonical?.litoshiPerCoin || 0,
-      minWithdrawCoins:
-        minWithdrawCoins || (enabled ? canonical?.minWithdrawCoins ?? 0 : 0),
-      feeCoins: feeCoins || (enabled ? canonical?.feeCoins ?? 0 : 0),
+      minWithdrawCoins,
+      feeCoins,
+      subscriber: {
+        minWithdrawCoins: subMin || (enabled ? canonicalSub.minWithdrawCoins : 0),
+        feeCoins: subFee !== 0 || (sub.feeCoins !== undefined)
+          ? subFee
+          : (enabled ? canonicalSub.feeCoins : 0),
+      },
       providerMinLitoshi:
         rawMin === null || rawMin === undefined
           ? null

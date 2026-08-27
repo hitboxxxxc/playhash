@@ -3,6 +3,8 @@
 > Autoridade: runner econômico (`backend/src/runner.ts` + `backend/src/processors/processWithdrawals.ts`).
 > Docs de referência: 05 §26–27 (saques/PayoutProvider), 04 (release/segurança).
 
+> **DECISÃO DO DONO (14.8):** Saque padrão: mínimo 50 COIN, taxa 25 COIN. Assinante: mínimo 10 COIN, taxa 0 (placeholder premium=false hoje; NADA de Google Play Billing/UI de assinatura agora). Mínimo efetivo exibido/validado = max(mínimo da regra, ceil(providerMinLitoshi / litoshiPerCoin) + taxa) — para o FaucetPay nunca receber pedido abaixo do mínimo dele.
+
 ## 1. Visão geral
 
 | Componente | Papel |

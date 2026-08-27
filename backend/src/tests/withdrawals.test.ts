@@ -27,8 +27,8 @@ import { PayoutProvider } from '../providers/payout_provider';
 
 const BASE: WithdrawalValidationInput = {
   assetEnabled: true,
-  amountUnits: 25_000_000n, // 25 coins
-  minWithdrawUnits: 20_000_000n, // 20 coins
+  amountUnits: 60_000_000n, // 60 coins
+  minWithdrawUnits: 50_000_000n, // 50 coins
   availableBalanceUnits: 100_000_000n,
   lastNonFailedWithdrawalAtMs: null,
   cooldownHours: 24,
@@ -58,12 +58,12 @@ describe('validateWithdrawal (a→h)', () => {
     });
   });
 
-  it('(b) abaixo do mínimo (20 coins) ⇒ BELOW_MIN (canônico 12.9)', () => {
-    expect(validateWithdrawal(input({ amountUnits: 19_999_999n }))).toEqual({
+  it('(b) abaixo do mínimo (50 coins) ⇒ BELOW_MIN (canônico 12.9)', () => {
+    expect(validateWithdrawal(input({ amountUnits: 49_999_999n }))).toEqual({
       ok: false,
       failureCode: 'BELOW_MIN',
     });
-    expect(validateWithdrawal(input({ amountUnits: 20_000_000n }))).toEqual({
+    expect(validateWithdrawal(input({ amountUnits: 50_000_000n }))).toEqual({
       ok: true,
     });
   });
@@ -162,8 +162,8 @@ describe('conversão v3 integrada à validação de saques (e-mail FaucetPay)', 
     id: 'LTC',
     network: 'FaucetPayEmail',
     enabled: true,
-    minWithdrawUnits: 20_000_000n,
-    feeUnits: 2_000_000n,
+    minWithdrawUnits: 50_000_000n,
+    feeUnits: 25_000_000n,
     assetDecimals: 8,
     assetUnitPerCoinScaled: 100n,
     providerMinAssetUnits: 0n,
@@ -174,14 +174,14 @@ describe('conversão v3 integrada à validação de saques (e-mail FaucetPay)', 
     displayRate: '1 COIN = 0,000001 LTC',
   };
 
-  it('saque no mínimo passa: líquido 1800 litoshi ≥ providerMin (null)', () => {
+  it('saque no mínimo passa: líquido 2500 litoshi ≥ providerMin (null)', () => {
     const conv = convertCoinsToLitoshi(LTC_V3.minWithdrawUnits, LTC_V3)!;
-    expect(conv.receivedLitoshi).toBe(1800n);
+    expect(conv.receivedLitoshi).toBe(2500n);
     expect(validateProviderLitoshiMinimum(conv, LTC_V3)).toEqual({ ok: true });
   });
 
   it('providerMin real acima do líquido ⇒ BELOW_MIN (canônico 12.9)', () => {
-    const conv = convertCoinsToLitoshi(20_000_000n, LTC_V3)!;
+    const conv = convertCoinsToLitoshi(50_000_000n, LTC_V3)!;
     const cfg: PayoutAssetConfig = { ...LTC_V3, providerMinLitoshi: 10_000n };
     expect(validateProviderLitoshiMinimum(conv, cfg)).toEqual({
       ok: false,
@@ -360,8 +360,8 @@ describe('CORREÇÃO 12.8: normalização de ids + gate de modo + fluxo LTC v3',
     id: 'LTC',
     network: 'FaucetPayEmail',
     enabled: true,
-    minWithdrawUnits: 20_000_000n,
-    feeUnits: 2_000_000n,
+    minWithdrawUnits: 50_000_000n,
+    feeUnits: 25_000_000n,
     assetDecimals: 8,
     assetUnitPerCoinScaled: 100n,
     providerMinAssetUnits: 0n,
@@ -411,19 +411,19 @@ describe('CORREÇÃO 12.8: normalização de ids + gate de modo + fluxo LTC v3',
 
   it('12.12: API sem mínimo/inválido ⇒ fallback conservador documentado', () => {
     expect(resolveProviderMinCandidate(undefined)).toEqual({
-      candidate: 1800,
+      candidate: 2500,
       source: 'fallback_plataforma',
     });
     expect(resolveProviderMinCandidate(0)).toEqual({
-      candidate: 1800,
+      candidate: 2500,
       source: 'fallback_plataforma',
     });
     expect(resolveProviderMinCandidate(-5)).toEqual({
-      candidate: 1800,
+      candidate: 2500,
       source: 'fallback_plataforma',
     });
     expect(resolveProviderMinCandidate(Number.NaN)).toEqual({
-      candidate: 1800,
+      candidate: 2500,
       source: 'fallback_plataforma',
     });
   });
@@ -436,8 +436,8 @@ describe('CORREÇÃO 12.8: normalização de ids + gate de modo + fluxo LTC v3',
     cfg.providerMinLitoshi = BigInt(candidate);
     // Gate do modo passa (mínimo conhecido):
     expect(validateProviderMinForMode('live', cfg)).toEqual({ ok: true });
-    // Saque mínimo da plataforma: líquido 1800 ≥ providerMin 1800 ⇒ passa:
-    const conv = convertCoinsToLitoshi(20_000_000n, cfg)!;
+    // Saque mínimo da plataforma: líquido 2500 ≥ providerMin 2500 ⇒ passa:
+    const conv = convertCoinsToLitoshi(50_000_000n, cfg)!;
     expect(validateProviderLitoshiMinimum(conv, cfg)).toEqual({ ok: true });
     // Provider mínimo real MAIOR que o líquido ⇒ BELOW_MIN real:
     const cfgHigh: PayoutAssetConfig = { ...cfg, providerMinLitoshi: 5000n };
@@ -453,19 +453,19 @@ describe('CORREÇÃO 12.8: normalização de ids + gate de modo + fluxo LTC v3',
     const assetCfg =
       [LTC_V3].find((a) => a.id === normalizeAssetId('ltc')) ?? null;
     expect(assetCfg).not.toBeNull();
-    // 2) validação econômica (a→h) passa no mínimo (20 coins):
+    // 2) validação econômica (a→h) passa no mínimo (50 coins):
     const validation = validateWithdrawal({
       ...BASE,
-      amountUnits: 20_000_000n,
+      amountUnits: 50_000_000n,
       minWithdrawUnits: assetCfg!.minWithdrawUnits,
       destinationEmail: 'owner@example.com',
     });
     expect(validation).toEqual({ ok: true });
-    // 3) conversão v3 inteira: (20 − 2) × 100 = 1800 litoshi:
-    const conv = convertCoinsToLitoshi(20_000_000n, assetCfg!)!;
-    expect(conv.amountCoins).toBe(20n);
-    expect(conv.feeCoins).toBe(2n);
-    expect(conv.receivedLitoshi).toBe(1800n);
+    // 3) conversão v3 inteira: (50 − 25) × 100 = 2500 litoshi:
+    const conv = convertCoinsToLitoshi(50_000_000n, assetCfg!)!;
+    expect(conv.amountCoins).toBe(50n);
+    expect(conv.feeCoins).toBe(25n);
+    expect(conv.receivedLitoshi).toBe(2500n);
     // 4) gate do modo (test, null) passa e o TestProvider paga SIM:
     expect(validateProviderMinForMode('test', assetCfg!)).toEqual({ ok: true });
     const result = await getPayoutProvider().sendPayout({
@@ -482,7 +482,7 @@ describe('CORREÇÃO 12.8: normalização de ids + gate de modo + fluxo LTC v3',
 
   it('recusas seguras permanecem: mínimo/saldo/cooldown não mudaram', () => {
     expect(
-      validateWithdrawal({ ...BASE, amountUnits: 19_999_999n }),
+      validateWithdrawal({ ...BASE, amountUnits: 49_999_999n }),
     ).toEqual({ ok: false, failureCode: 'BELOW_MIN' });
     expect(
       validateWithdrawal({ ...BASE, availableBalanceUnits: 1n }),

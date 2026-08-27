@@ -1,16 +1,19 @@
+import 'dart:math';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../../core/constants/collections.dart';
 
 /// Contrato do repositório de sessões de partida — permite fakes nos testes.
 abstract interface class GameSessionsRepositoryApi {
-  /// Cria `gameSessions/{id}` {uid, gameId, startedAt, clientVersion,
-  /// status:'open'} e retorna o id. `startedAt` usa timestamp do servidor
-  /// (rules impõem ≈ request.time).
+  /// Cria `gameSessions/{clientRequestId}` {uid, gameId, clientRequestId,
+  /// startedAt, clientVersion, status:'open'} e retorna o id.
+  /// `startedAt` usa timestamp do servidor (rules impõem ≈ request.time).
   Future<String> createSession({
     required String uid,
     required String gameId,
     required String clientVersion,
+    String? clientRequestId,
   });
 
   /// Fecha a sessão num ÚNICO update open→finished {score, kills, breakdown,
@@ -38,6 +41,8 @@ abstract interface class GameSessionsRepositoryApi {
 ///
 /// O cliente só escreve intenções com campos exatos validados pelas rules;
 /// score/duração/poder são validados SOMENTE pelo backend (runner).
+/// O doc id É o clientRequestId (UUID v4) ⇒ retry offline reescreve o MESMO
+/// doc (idempotência; update é negado pelas rules).
 class GameSessionsRepository implements GameSessionsRepositoryApi {
   GameSessionsRepository({FirebaseFirestore? firestore})
       : _dbOverride = firestore;
@@ -49,22 +54,36 @@ class GameSessionsRepository implements GameSessionsRepositoryApi {
   CollectionReference<Map<String, dynamic>> get _sessions =>
       _db.collection(Collections.gameSessions);
 
+  final Random _random = Random.secure();
+
+  /// UUID v4 próprio (sem dependência externa).
+  String generateClientRequestId() {
+    final List<int> bytes = List<int>.generate(16, (_) => _random.nextInt(256));
+    bytes[6] = (bytes[6] & 0x0f) | 0x40; // versão 4
+    bytes[8] = (bytes[8] & 0x3f) | 0x80; // variante RFC 4122
+    String hex(int b) => b.toRadixString(16).padLeft(2, '0');
+    final String h = bytes.map(hex).join();
+    return '${h.substring(0, 8)}-${h.substring(8, 12)}-'
+        '${h.substring(12, 16)}-${h.substring(16, 20)}-${h.substring(20)}';
+  }
+
   @override
   Future<String> createSession({
     required String uid,
     required String gameId,
     required String clientVersion,
+    String? clientRequestId,
   }) async {
-    final DocumentReference<Map<String, dynamic>> ref = await _sessions.add(
-      <String, dynamic>{
-        'uid': uid,
-        'gameId': gameId,
-        'startedAt': FieldValue.serverTimestamp(),
-        'clientVersion': clientVersion,
-        'status': 'open',
-      },
-    );
-    return ref.id;
+    final String requestId = clientRequestId ?? generateClientRequestId();
+    await _sessions.doc(requestId).set(<String, dynamic>{
+      'uid': uid,
+      'gameId': gameId,
+      'clientRequestId': requestId,
+      'startedAt': FieldValue.serverTimestamp(),
+      'clientVersion': clientVersion,
+      'status': 'open',
+    });
+    return requestId;
   }
 
   @override

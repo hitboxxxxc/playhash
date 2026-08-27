@@ -209,52 +209,28 @@ service cloud.firestore {
     }
 
     // ---- Sessões de partida: cliente escreve INTENÇÃO validada ---------
+    // MINIMALISTA (doc 05 §35/§51, prompt 6.7): rules validam DONO+FORMATO;
+    // economia (score/duração/breakdown/caps/quota) é validada SOMENTE no runner.
     match /gameSessions/{sessionId} {
-      allow read: if isSignedIn()
+      allow read: if request.auth != null
         && resource.data.uid == request.auth.uid;
 
-      // CREATE: campos EXATOS de abertura; startedAt ≈ agora; game habilitado.
-      allow create: if isSignedIn()
+      // CREATE: dono + chaves exatas do payload do cliente + status open.
+      // O runner valida gameId habilitado, startedAt ≈ agora, etc.
+      allow create: if request.auth != null
         && request.resource.data.uid == request.auth.uid
+        && request.resource.data.clientRequestId == sessionId
         && request.resource.data.keys().hasOnly(
-              ['uid', 'gameId', 'startedAt', 'clientVersion', 'status'])
-        && request.resource.data.status == 'open'
-        && request.resource.data.gameId is string
-        && request.resource.data.gameId.size() > 0
-        && request.resource.data.gameId.size() <= 64
-        && request.resource.data.clientVersion is string
-        && request.resource.data.clientVersion.size() <= 32
-        && withinTolerance(request.resource.data.startedAt)
-        && exists(/databases/$(database)/documents/games/$(request.resource.data.gameId))
-        && get(/databases/$(database)/documents/games/$(request.resource.data.gameId)).data.enabled == true;
+              ['uid', 'gameId', 'clientRequestId', 'startedAt', 'clientVersion', 'status'])
+        && request.resource.data.status == 'open';
 
-      // UPDATE: owner, UMA vez, open→finished, score inteiro dentro da
-      // configuração do game, kills consistente (opcional), finishedAt ≈
-      // agora. Campos admin (processed, serverResult) JAMAIS do cliente.
-      allow update: if isSignedIn()
+      // UPDATE: dono + uid imutável + transição open→finished (uma vez).
+      // Campos de score/breakdown/kills/finishedAt são LIVRES — o runner valida.
+      allow update: if request.auth != null
         && resource.data.uid == request.auth.uid
+        && request.resource.data.uid == resource.data.uid
         && resource.data.status == 'open'
-        && request.resource.data.status == 'finished'
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(
-              ['status', 'score', 'finishedAt', 'kills', 'breakdown'])
-        && request.resource.data.score is int
-        && request.resource.data.score >= 0
-        && request.resource.data.score <= gameMaxScore(resource.data.gameId)
-        && (!('kills' in request.resource.data)
-            || (request.resource.data.kills is int
-                && request.resource.data.kills >= 0
-                && killsConsistent(resource.data.gameId,
-                                   request.resource.data.kills,
-                                   request.resource.data.score)))
-        // Breakdown: campos validados contra a config do game; games com
-        // pointsPerStomp > 0 EXIGEM breakdown consistente com o score.
-        && (!('breakdown' in request.resource.data)
-            || breakdownValid(resource.data.gameId,
-                              request.resource.data.breakdown,
-                              request.resource.data.score))
-        && (gamePointsPerStomp(resource.data.gameId) <= 0
-            || 'breakdown' in request.resource.data)
-        && withinTolerance(request.resource.data.finishedAt);
+        && request.resource.data.status == 'finished';
 
       allow delete: if false;
     }

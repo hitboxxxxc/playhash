@@ -51,15 +51,15 @@ const DOGE: PayoutAssetConfig = {
 /**
  * Réplica EXATA do LTC seedado em config/payouts v3:
  * destino = e-mail FaucetPay; conversão FIXA 1 COIN = 100 litoshi
- * (= 0,000001 LTC); mínimo 20 coins; taxa 2 coins; providerMinLitoshi null
+ * (= 0,000001 LTC); mínimo 50 coins; taxa 25 coins; providerMinLitoshi null
  * até o probe confirmar o mínimo real do envio interno.
  */
 const LTC_V3: PayoutAssetConfig = {
   id: 'LTC',
   network: 'FaucetPayEmail',
   enabled: true,
-  minWithdrawUnits: 20_000_000n, // 20 coins
-  feeUnits: 2_000_000n, // 2 coins
+  minWithdrawUnits: 50_000_000n, // 50 coins
+  feeUnits: 25_000_000n, // 25 coins
   assetDecimals: 8,
   assetUnitPerCoinScaled: 100n,
   providerMinAssetUnits: 0n,
@@ -168,20 +168,20 @@ describe('coinsToLitoshi (v3 — conversão FIXA inteira)', () => {
 });
 
 describe('convertCoinsToLitoshi (helper único v3 do processador)', () => {
-  it('mínimo (20 coins): líquido = (20 − 2) × 100 = 1800 litoshi', () => {
+  it('mínimo (50 coins): líquido = (50 − 25) × 100 = 2500 litoshi', () => {
     const conv = convertCoinsToLitoshi(LTC_V3.minWithdrawUnits, LTC_V3)!;
-    expect(conv.amountCoins).toBe(20n);
-    expect(conv.feeCoins).toBe(2n);
-    expect(conv.receivedLitoshi).toBe(1800n); // 0,000018 LTC
+    expect(conv.amountCoins).toBe(50n);
+    expect(conv.feeCoins).toBe(25n);
+    expect(conv.receivedLitoshi).toBe(2500n); // 0,000025 LTC
   });
 
-  it('58 coins ⇒ recebe 5600 litoshi (0,000056 LTC)', () => {
+  it('58 coins ⇒ recebe 3300 litoshi (0,000033 LTC)', () => {
     const conv = convertCoinsToLitoshi(58_000_000n, LTC_V3)!;
-    expect(conv.receivedLitoshi).toBe(5600n);
+    expect(conv.receivedLitoshi).toBe(3300n);
   });
 
   it('valor abaixo da taxa ⇒ 0 litoshi (nunca negativo)', () => {
-    const conv = convertCoinsToLitoshi(1_000_000n, LTC_V3)!; // 1 coin < fee 2
+    const conv = convertCoinsToLitoshi(1_000_000n, LTC_V3)!; // 1 coin < fee 25
     expect(conv.receivedLitoshi).toBe(0n);
   });
 
@@ -190,14 +190,14 @@ describe('convertCoinsToLitoshi (helper único v3 do processador)', () => {
   });
 
   it('validateProviderLitoshiMinimum: null ⇒ passa; real > recebido ⇒ BELOW_MIN', () => {
-    const conv = convertCoinsToLitoshi(20_000_000n, LTC_V3)!;
+    const conv = convertCoinsToLitoshi(50_000_000n, LTC_V3)!;
     expect(validateProviderLitoshiMinimum(conv, LTC_V3)).toEqual({ ok: true });
     const withMin: PayoutAssetConfig = { ...LTC_V3, providerMinLitoshi: 5000n };
     expect(validateProviderLitoshiMinimum(conv, withMin)).toEqual({
       ok: false,
       failureCode: 'BELOW_MIN',
     });
-    const okMin: PayoutAssetConfig = { ...LTC_V3, providerMinLitoshi: 1800n };
+    const okMin: PayoutAssetConfig = { ...LTC_V3, providerMinLitoshi: 2500n };
     expect(validateProviderLitoshiMinimum(conv, okMin)).toEqual({ ok: true });
   });
 });

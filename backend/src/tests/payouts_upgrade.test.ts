@@ -34,12 +34,12 @@ describe('buildPayoutsV3Doc — doc AUSENTE', () => {
     expect(ltc.enabled).toBe(true);
     expect(ltc.network).toBe('FaucetPayEmail');
     expect(ltc.litoshiPerCoin).toBe(100);
-    expect(ltc.minWithdrawCoins).toBe(20);
-    expect(ltc.feeCoins).toBe(2);
+    expect(ltc.minWithdrawCoins).toBe(50);
+    expect(ltc.feeCoins).toBe(25);
     expect(ltc.providerMinLitoshi).toBeNull();
     // Compat numérica em sincronia:
-    expect(ltc.minWithdrawUnits).toBe(20_000_000);
-    expect(ltc.feeUnits).toBe(2_000_000);
+    expect(ltc.minWithdrawUnits).toBe(50_000_000);
+    expect(ltc.feeUnits).toBe(25_000_000);
     // Demais ativos desabilitados:
     for (const id of ['BTC', 'DOGE', 'USDT']) {
       expect(assetById(doc.assets as Record<string, unknown>[], id).enabled).toBe(false);
@@ -93,7 +93,7 @@ describe('upgrade v2 → v3', () => {
     expect(ltc.assetDecimals).toBe(8);
     // Campos v3 SOBREPÕEM a conversão v2 (taxa fixa autoritativa):
     expect(ltc.assetUnitPerCoinScaled).toBe(100); // v2 tinha 2000
-    expect(ltc.minWithdrawUnits).toBe(20_000_000); // v2 tinha 60_000_000
+    expect(ltc.minWithdrawUnits).toBe(50_000_000); // v2 tinha 60_000_000
     expect(ltc.providerMinAssetUnits).toBe(0); // v2 tinha 100_000
     expect(ltc.providerFeeAssetUnits).toBe(0); // v2 tinha 5_000
     expect(ltc.providerMinLitoshi).toBeNull();
@@ -136,8 +136,8 @@ describe('SCHEMA CANÔNICO v4 (12.9): normalização de legado', () => {
     expect(n.assets.LTC).toBeDefined();
     expect(n.assets.LTC!.enabled).toBe(true);
     expect(n.assets.LTC!.litoshiPerCoin).toBe(100);
-    expect(n.assets.LTC!.minWithdrawCoins).toBe(20);
-    expect(n.assets.LTC!.feeCoins).toBe(2);
+    expect(n.assets.LTC!.minWithdrawCoins).toBe(50);
+    expect(n.assets.LTC!.feeCoins).toBe(25);
     expect(n.assets.LTC!.providerMinLitoshi).toBeNull();
     expect(n.assets.BTC!.enabled).toBe(false);
   });
@@ -164,8 +164,8 @@ describe('SCHEMA CANÔNICO v4 (12.9): normalização de legado', () => {
     // LTC/BTC do legado + completude canônica (DOGE/USDT adicionados):
     expect(Object.keys(n.assets)).toEqual(['LTC', 'BTC', 'DOGE', 'USDT']);
     expect(n.assets.LTC!.litoshiPerCoin).toBe(100);
-    expect(n.assets.LTC!.minWithdrawCoins).toBe(20);
-    expect(n.assets.LTC!.feeCoins).toBe(2);
+    expect(n.assets.LTC!.minWithdrawCoins).toBe(50);
+    expect(n.assets.LTC!.feeCoins).toBe(25);
     expect(n.assets.BTC!.enabled).toBe(false);
   });
 
@@ -193,7 +193,7 @@ describe('SCHEMA CANÔNICO v4 (12.9): normalização de legado', () => {
     expect(doc.destinationType).toBe('faucetpay_email');
     const assets = doc.assets as Record<string, Record<string, unknown>>;
     expect(assets.LTC!.enabled).toBe(true);
-    expect(assets.LTC!.minWithdrawCoins).toBe(20); // default canônico
+    expect(assets.LTC!.minWithdrawCoins).toBe(50); // default canônico
     expect(assets.BTC!.enabled).toBe(false); // sem entry legada ⇒ canônico
   });
 
@@ -203,9 +203,9 @@ describe('SCHEMA CANÔNICO v4 (12.9): normalização de legado', () => {
     const n = normalizePayoutsDoc(null);
     const ltc = n.assets.LTC!;
     expect(ltc.enabled).toBe(true);
-    expect(ltc.minWithdrawCoins * 1_000_000).toBe(20_000_000);
+    expect(ltc.minWithdrawCoins * 1_000_000).toBe(50_000_000);
     expect((ltc.minWithdrawCoins - ltc.feeCoins) * ltc.litoshiPerCoin).toBe(
-      1800,
+      2500,
     );
   });
 });
@@ -221,31 +221,31 @@ describe('applyProbeMinimum (12.10 — gravação do mínimo real pelo payoutPro
 
   it('NUNCA ABAIXA um mínimo já confirmado (merge seguro)', () => {
     const withMin = applyProbeMinimum(null, 5000);
-    const again = applyProbeMinimum(withMin, 1800); // candidato menor
+    const again = applyProbeMinimum(withMin, 2500); // candidato menor
     const assets = again.assets as Record<string, Record<string, unknown>>;
     expect(assets.LTC!.providerMinLitoshi).toBe(5000);
   });
 
   it('candidato MAIOR sobe a barreira (mínimo real > config)', () => {
-    const withMin = applyProbeMinimum(null, 1800);
+    const withMin = applyProbeMinimum(null, 2500);
     const raised = applyProbeMinimum(withMin, 9000);
     const assets = raised.assets as Record<string, Record<string, unknown>>;
     expect(assets.LTC!.providerMinLitoshi).toBe(9000);
   });
 
   it('idempotente: aplicar 2× com o mesmo valor produz o mesmo doc', () => {
-    const once = applyProbeMinimum(null, 1800);
-    const twice = applyProbeMinimum(once, 1800);
+    const once = applyProbeMinimum(null, 2500);
+    const twice = applyProbeMinimum(once, 2500);
     expect(twice).toEqual(once);
   });
 
   it('preserva escalares antifraude e demais ativos do doc existente', () => {
     const base = buildPayoutsV4Doc({ cooldownHours: 12, maxPerDay: 5 });
-    const out = applyProbeMinimum(base, 1800);
+    const out = applyProbeMinimum(base, 2500);
     expect(out.cooldownHours).toBe(12);
     expect(out.maxPerDay).toBe(5);
     const assets = out.assets as Record<string, Record<string, unknown>>;
     expect(assets.BTC!.enabled).toBe(false);
-    expect(assets.LTC!.minWithdrawCoins).toBe(20);
+    expect(assets.LTC!.minWithdrawCoins).toBe(50);
   });
 });
