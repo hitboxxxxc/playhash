@@ -9,7 +9,7 @@ import '../../features/auth/forgot_password_screen.dart';
 import '../../features/auth/login_screen.dart';
 import '../../features/auth/register_screen.dart';
 import '../../features/common/coming_soon_screen.dart';
-import '../../features/games/games_screen.dart';
+import '../../features/games/pixel_games_screen.dart';
 import '../../features/home/pixel_home_screen.dart';
 import '../../features/machines/pixel_sala_screen.dart';
 import '../../features/store/pixel_loja_screen.dart';
@@ -169,7 +169,7 @@ GoRouter createAppRouter({AuthServiceApi? auth, String? initialLocation}) {
                   pages: [
                     PixelHomeScreen(onPlayGames: () => shellIndex.value = 2),
                     const PixelSalaScreen(),
-                    const GamesScreen(),
+                    const PixelGamesScreen(),
                     const PixelWalletScreen(),
                   ],
                   menuItems: [
