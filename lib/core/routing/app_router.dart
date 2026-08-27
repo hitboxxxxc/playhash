@@ -150,6 +150,11 @@ GoRouter createAppRouter({AuthServiceApi? auth, String? initialLocation}) {
           );
         },
       ),
+      GoRoute(path: RoutePaths.home, redirect: (_, _) => '/app'),
+      GoRoute(path: RoutePaths.games, redirect: (_, _) => '/app'),
+      GoRoute(path: RoutePaths.mining, redirect: (_, _) => '/app'),
+      GoRoute(path: RoutePaths.store, redirect: (_, _) => '/app'),
+      GoRoute(path: RoutePaths.profile, redirect: (_, _) => '/app'),
     ],
   );
 }

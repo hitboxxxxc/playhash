@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:playhash/core/widgets/pixel_shell.dart';
 import 'package:playhash/core/widgets/pixel_topbar.dart';
-import 'package:playhash/core/widgets/pixel_icon.dart';
 
 void main() {
   testWidgets('PixelShell navigation and menu test', (WidgetTester tester) async {
