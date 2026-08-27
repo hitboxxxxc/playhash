@@ -30,6 +30,32 @@ class PurchaseIntentResult {
       );
 }
 
+/// Resultado de uma intent de upgrade observada.
+class MachineUpgradeIntentResult {
+  const MachineUpgradeIntentResult({
+    required this.status,
+    this.failureCode,
+    this.newLevel,
+  });
+
+  /// 'pending' | 'done' | 'failed'.
+  final String status;
+  final String? failureCode;
+  final int? newLevel;
+
+  bool get isDone => status == 'done';
+  bool get isFailed => status == 'failed';
+
+  static MachineUpgradeIntentResult fromMap(Map<String, dynamic> data) =>
+      MachineUpgradeIntentResult(
+        status: (data['status'] as String?) ?? 'pending',
+        failureCode: data['failureCode'] as String?,
+        newLevel: data['newLevel'] != null
+            ? (data['newLevel'] as num).toInt()
+            : null,
+      );
+}
+
 /// Contrato do repositório de intents de compra — permite fakes nos testes.
 abstract interface class PurchaseIntentsRepositoryApi {
   /// Cria `purchaseIntents/{clientRequestId}` com EXATAMENTE os campos
@@ -92,6 +118,47 @@ class PurchaseIntentsRepository implements PurchaseIntentsRepositoryApi {
           );
 }
 
+/// Repositório de intents de upgrade de máquina (`machineUpgradeIntents`).
+class MachineUpgradeIntentsRepository {
+  MachineUpgradeIntentsRepository({FirebaseFirestore? firestore})
+      : _dbOverride = firestore;
+
+  final FirebaseFirestore? _dbOverride;
+
+  FirebaseFirestore get _db => _dbOverride ?? FirebaseFirestore.instance;
+
+  CollectionReference<Map<String, dynamic>> get _intents =>
+      _db.collection('machineUpgradeIntents');
+
+  Future<void> createIntent({
+    required String clientRequestId,
+    required String uid,
+    required String machineId,
+  }) async {
+    await _intents.doc(clientRequestId).set(<String, dynamic>{
+      'uid': uid,
+      'machineId': machineId,
+      'clientRequestId': clientRequestId,
+      'createdAt': FieldValue.serverTimestamp(),
+      'status': 'pending',
+    });
+  }
+
+  Future<MachineUpgradeIntentResult?> readIntent(String clientRequestId) async {
+    final DocumentSnapshot<Map<String, dynamic>> snap =
+        await _intents.doc(clientRequestId).get();
+    if (!snap.exists) return null;
+    return MachineUpgradeIntentResult.fromMap(snap.data()!);
+  }
+
+  Stream<MachineUpgradeIntentResult> watchIntent(String clientRequestId) =>
+      _intents.doc(clientRequestId).snapshots().map(
+            (DocumentSnapshot<Map<String, dynamic>> snap) =>
+                MachineUpgradeIntentResult.fromMap(
+                    snap.data() ?? const <String, dynamic>{}),
+          );
+}
+
 /// Falha de compra com mensagem SEGURA em PT-BR (sem vazar detalhes internos).
 class PurchaseIntentException implements Exception {
   PurchaseIntentException(this.message);
@@ -118,6 +185,10 @@ class PurchaseIntentService {
   PurchaseIntentsRepositoryApi get _repository =>
       _repositoryOverride ?? PurchaseIntentsRepository();
 
+  /// Repositório de intents de upgrade.
+  final MachineUpgradeIntentsRepository _upgradeRepository =
+      MachineUpgradeIntentsRepository();
+
   /// UUID v4 próprio (sem dependência externa).
   String generateClientRequestId() {
     final List<int> bytes = List<int>.generate(16, (_) => _random.nextInt(256));
@@ -129,10 +200,7 @@ class PurchaseIntentService {
         '${h.substring(12, 16)}-${h.substring(16, 20)}-${h.substring(20)}';
   }
 
-  /// Cria a intent com retry seguro (mesmo clientRequestId). Se o doc já
-  /// existe (retry pós-instabilidade), trata como enviado.
-  ///
-  /// Retorna o clientRequestId para observação do resultado.
+  /// Cria a intent de compra com retry seguro (mesmo clientRequestId).
   Future<String> createIntent({
     required String uid,
     required String machineId,
@@ -151,7 +219,6 @@ class PurchaseIntentService {
         return requestId;
       } on FirebaseException catch (e) {
         if (e.code == 'permission-denied') {
-          // Doc já existente (retry) ⇒ update negado; confirma e segue.
           final PurchaseIntentResult? existing =
               await _repository.readIntent(requestId);
           if (existing != null) return requestId;
@@ -160,7 +227,7 @@ class PurchaseIntentService {
           );
         }
         if (e.code == 'unavailable' || e.code == 'network-request-failed') {
-          lastError = e; // offline: retry com o MESMO requestId
+          lastError = e;
         } else {
           throw PurchaseIntentException(
             'Não foi possível enviar a compra. Tente novamente.',
@@ -177,9 +244,53 @@ class PurchaseIntentService {
     );
   }
 
-  /// Observa a intent até done/failed (o runner processa em até ~5 min).
+  /// Cria a intent de upgrade com retry seguro.
+  Future<String> createUpgradeIntent({
+    required String uid,
+    required String machineId,
+    String? clientRequestId,
+    int maxAttempts = 3,
+  }) async {
+    final String requestId = clientRequestId ?? generateClientRequestId();
+    for (int attempt = 0; attempt < maxAttempts; attempt++) {
+      try {
+        await _upgradeRepository.createIntent(
+          clientRequestId: requestId,
+          uid: uid,
+          machineId: machineId,
+        );
+        return requestId;
+      } on FirebaseException catch (e) {
+        if (e.code == 'permission-denied') {
+          final MachineUpgradeIntentResult? existing =
+              await _upgradeRepository.readIntent(requestId);
+          if (existing != null) return requestId;
+          throw PurchaseIntentException(
+            'O upgrade não pôde ser enviado agora. Tente novamente.',
+          );
+        }
+        if (e.code == 'unavailable' || e.code == 'network-request-failed') {
+          // offline: retry com o MESMO requestId
+        } else {
+          throw PurchaseIntentException(
+            'Não foi possível enviar o upgrade. Tente novamente.',
+          );
+        }
+      }
+      await Future<void>.delayed(Duration(milliseconds: 600 * (attempt + 1)));
+    }
+    throw PurchaseIntentException(
+      'Sem conexão para enviar o upgrade. Verifique a internet e tente de novo.',
+    );
+  }
+
+  /// Observa a intent de compra até done/failed.
   Stream<PurchaseIntentResult> watchResult(String clientRequestId) =>
       _repository.watchIntent(clientRequestId);
+
+  /// Observa a intent de upgrade até done/failed.
+  Stream<MachineUpgradeIntentResult> watchUpgradeResult(String clientRequestId) =>
+      _upgradeRepository.watchIntent(clientRequestId);
 
   /// Mensagem SEGURA por código de falha do runner.
   static String failureMessage(String? code) {
@@ -195,8 +306,12 @@ class PurchaseIntentService {
         return 'Limite diário de compras atingido. Tente amanhã.';
       case 'DUPLICATE_CLIENT_REQUEST_ID':
         return 'Este pedido já foi registrado. Verifique sua sala de máquinas.';
+      case 'MACHINE_NOT_OWNED':
+        return 'Você não possui esta máquina.';
+      case 'MAX_LEVEL_REACHED':
+        return 'Esta máquina já está no nível máximo.';
       default:
-        return 'A compra não pôde ser concluída. Tente novamente mais tarde.';
+        return 'A operação não pôde ser concluída. Tente novamente mais tarde.';
     }
   }
 }

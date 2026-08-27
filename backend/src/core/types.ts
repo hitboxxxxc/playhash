@@ -175,7 +175,9 @@ export type AuditEventType =
   // Micro-teste live opcional (payoutLiveTest; NÃO reserva saldo de usuário).
   | 'WITHDRAWAL_TEST'
   | 'REWARD_REVERSED'
-  | 'ACCOUNT_ECONOMIC_LOCK';
+  | 'ACCOUNT_ECONOMIC_LOCK'
+  | 'MACHINE_UPGRADED'
+  | 'MACHINE_UPGRADE_FAILED';
 
 export interface ProcessingSummary {
   scanned: number;

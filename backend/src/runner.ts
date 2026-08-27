@@ -14,6 +14,7 @@ import { getAuth } from 'firebase-admin/auth';
 import { initAdmin } from './admin';
 import { processGameSessions } from './processors/processGameSessions';
 import { processPurchaseIntents } from './processors/processPurchaseIntents';
+import { processMachineUpgrades } from './processors/processMachineUpgrades';
 import { processAdRewards } from './processors/processAdRewards';
 import { processClaims } from './processors/processClaims';
 import { closeBlocks } from './processors/closeBlocks';
@@ -932,6 +933,7 @@ async function main(): Promise<void> {
   const processors: Processor[] = [
     { name: 'gameSessions', run: processGameSessions },
     { name: 'purchaseIntents', run: processPurchaseIntents },
+    { name: 'machineUpgrades', run: processMachineUpgrades },
     // Recompensas por anúncio ANTES de claims/seasonProgress: o xpBonus do
     // adReward entra no seasonProgress antes do fechamento de blocos.
     { name: 'adRewards', run: processAdRewards },

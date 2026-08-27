@@ -288,6 +288,29 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    // ---- Intenções de upgrade de máquina: cliente só CRIA a intenção ----
+    match /machineUpgradeIntents/{intentId} {
+      allow read: if isSignedIn()
+        && resource.data.uid == request.auth.uid;
+
+      allow create: if isSignedIn()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.keys().hasOnly(
+             ['uid', 'machineId', 'clientRequestId', 'createdAt', 'status'])
+        && request.resource.data.status == 'pending'
+        && request.resource.data.machineId is string
+        && request.resource.data.machineId.size() > 0
+        && request.resource.data.machineId.size() <= 64
+        && request.resource.data.clientRequestId == intentId
+        && request.resource.data.clientRequestId.size() >= 8
+        && request.resource.data.clientRequestId.size() <= 128
+        && withinTolerance(request.resource.data.createdAt)
+        && exists(/databases/$(database)/documents/config/catalog/machines/$(request.resource.data.machineId))
+        && get(/databases/$(database)/documents/config/catalog/machines/$(request.resource.data.machineId)).data.enabled == true;
+
+      allow update, delete: if false;
+    }
+
     // ---- Claims (missões/conquistas): cliente só CRIA a intenção --------
     // Doc id = clientRequestId (UUID v4) ⇒ retry offline reescreve o MESMO
     // doc (idempotência; update é negado). A RECOMPENSA é concedida

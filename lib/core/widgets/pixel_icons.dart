@@ -197,4 +197,64 @@ class PixelIcons {
     '..W.........',
     '............',
   ];
+
+  static const List<String> bolt = [
+    '.....YY.....',
+    '....YYY.....',
+    '...YYY......',
+    '..YYYYYY....',
+    '....YYYY....',
+    '...YYY......',
+    '..YYY.......',
+    '.YYY........',
+    '.YY.........',
+    '............',
+    '............',
+    '............',
+  ];
+
+  static const List<String> rack = [
+    '.KKKKKKKKKK.',
+    '.KGGKKKKVVK.',
+    '.KKKKKKKKKK.',
+    '.KVVKKKGGKK.',
+    '.KKKKKKKKKK.',
+    '.KGGKKKVVKK.',
+    '.KKKKKKKKKK.',
+    '.KVVKKKGGKK.',
+    '.KKKKKKKKKK.',
+    '.KKKKKKKKKK.',
+    '............',
+    '............',
+  ];
+
+  static const List<String> machineA = [
+    '.KKKKKKKKKK.',
+    '.KGGKKKKKVK.',
+    '.KKKKKKKKKK.',
+    '.KKSSSSSSKK.',
+    '.KKSKKKKSKK.',
+    '.KKSKKKKSKK.',
+    '.KKSSSSSSKK.',
+    '.KKKKKKKKKK.',
+    '.KGGKKKKKVK.',
+    '.KKKKKKKKKK.',
+    '............',
+    '............',
+  ];
+
+  static const List<String> machineB = [
+    '.KKKKKKKKKK.',
+    '.KGGKKKKKVK.',
+    '.KKKKKKKKKK.',
+    '.KSSKKKKSSK.',
+    '.KSSKKKKSSK.',
+    '.KKKKKKKKKK.',
+    '.KSSKKKKSSK.',
+    '.KSSKKKKSSK.',
+    '.KKKKKKKKKK.',
+    '.KGGKKKKKVK.',
+    '............',
+    '............',
+  ];
 }

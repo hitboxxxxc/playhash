@@ -11,6 +11,9 @@ class MachineCatalogModel {
     required this.maxPerUser,
     required this.enabled,
     this.currencyId = 'coins',
+    this.maxLevel = 1,
+    this.levelPowerStep = 0.0,
+    this.upgradeCostFactor = 0.0,
   });
 
   final String id;
@@ -31,11 +34,27 @@ class MachineCatalogModel {
   final bool enabled;
   final String currencyId;
 
+  /// Nível máximo da máquina (default 1 = sem upgrade).
+  final int maxLevel;
+
+  /// Incremento de poder por nível (ex.: 0.25 = 25% do poder base por nível).
+  final double levelPowerStep;
+
+  /// Fator de custo de upgrade: custo = price * factor * currentLevel.
+  final double upgradeCostFactor;
+
   static int _toInt(Object? value) {
     if (value is int) return value;
     if (value is num) return value.toInt();
     if (value is String) return int.tryParse(value) ?? 0;
     return 0;
+  }
+
+  static double _toDouble(Object? value) {
+    if (value is double) return value;
+    if (value is int) return value.toDouble();
+    if (value is String) return double.tryParse(value) ?? 0.0;
+    return 0.0;
   }
 
   static BigInt _toBigInt(Object? value) {
@@ -55,5 +74,8 @@ class MachineCatalogModel {
         maxPerUser: _toInt(map['maxPerUser']),
         enabled: map['enabled'] == true,
         currencyId: (map['currencyId'] as String?) ?? 'coins',
+        maxLevel: _toInt(map['maxLevel'] ?? 1),
+        levelPowerStep: _toDouble(map['levelPowerStep'] ?? 0.0),
+        upgradeCostFactor: _toDouble(map['upgradeCostFactor'] ?? 0.0),
       );
 }
