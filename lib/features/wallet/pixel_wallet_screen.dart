@@ -10,16 +10,14 @@ import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/theme/pixel_theme.dart';
 import '../../core/utils/coin_format.dart';
-import '../../core/widgets/pixel_button.dart';
 import '../../core/widgets/pixel_card.dart';
 import '../../core/widgets/pixel_icon.dart';
 import '../../core/widgets/pixel_icons.dart';
 import '../../core/widgets/section_title.dart';
-import '../../core/widgets/next_block_countdown.dart' show NextBlockCountdown;
 import '../../data/models/wallet_model.dart';
 import '../../data/repositories/mining_repository.dart';
 import '../../data/repositories/payouts_repository.dart'
-    show RewardHistoryEntry, WithdrawalModel;
+    show PayoutAsset, RewardHistoryEntry, WithdrawalModel;
 import 'widgets/wallet_history_list.dart';
 import 'widgets/withdraw_confirm_sheet.dart';
 import 'widgets/withdraw_form.dart';
@@ -35,7 +33,6 @@ class PixelWalletScreen extends ConsumerStatefulWidget {
 class _PixelWalletScreenState extends ConsumerState<PixelWalletScreen> {
   bool _submitting = false;
   final ValueNotifier<int> _amountCoins = ValueNotifier<int>(0);
-  BlockSnapshot? _block;
   StreamSubscription<BlockSnapshot?>? _blockSub;
 
   @override
@@ -57,9 +54,9 @@ class _PixelWalletScreenState extends ConsumerState<PixelWalletScreen> {
           .read(miningRepositoryProvider)
           .watchBlockSnapshot()
           .listen(
-            (BlockSnapshot? block) {
+            (BlockSnapshot? _) {
               if (!mounted) return;
-              setState(() => _block = block);
+              setState(() {});
             },
             onError: (Object _) {},
           );
@@ -207,7 +204,7 @@ class _PixelWalletScreenState extends ConsumerState<PixelWalletScreen> {
   Widget build(BuildContext context) {
     ref.watch(manualPayoutWatchProvider);
     final AsyncValue<WalletModel?> wallet = ref.watch(walletStreamProvider);
-    final int saldoUnits = wallet.value?.availableBalance?.toInt() ?? 0;
+    final int saldoUnits = wallet.value?.availableBalance.toInt() ?? 0;
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(12),
@@ -333,65 +330,89 @@ class _PixelWalletScreenState extends ConsumerState<PixelWalletScreen> {
           PixelCard(
             padding: const EdgeInsets.all(16),
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: <Widget>[
-                const SectionTitle(text: 'SACAR VIA FAUCETPAY (LTC)'),
-                const SizedBox(height: 12),
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                Column(
                   children: <Widget>[
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: <Widget>[
-                          const Text(
-                            'Converta seus coins em LTC e receba na sua conta FaucetPay.',
-                            style: PixelTheme.label,
-                          ),
-                          const SizedBox(height: 12),
-                          _buildForm(),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    const PixelIcon(matrix: PixelIcons.safe, palette: PixelIcons.palette, size: 56),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: PixelTheme.cyan.withValues(alpha: 0.1),
-                    border: Border.all(color: PixelTheme.cyan.withValues(alpha: 0.4)),
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: const Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: <Widget>[
-                      Row(
-                        children: <Widget>[
-                          Icon(Icons.info_outline, size: 16, color: PixelTheme.cyan),
-                          SizedBox(width: 6),
-                          Text(
-                            'COMO FUNCIONA',
-                            style: TextStyle(
-                              color: PixelTheme.cyan,
-                              fontWeight: FontWeight.w800,
-                              fontSize: 12,
-                            ),
-                          ),
-                        ],
-                      ),
-                      SizedBox(height: 6),
-                      Text(
-                        'Seus coins são convertidos em LTC na proporção de 1 COIN = 0,000001 LTC. O valor é enviado via FaucetPay para o seu e-mail ou endereço LTC vinculado.',
-                        style: TextStyle(
-                          color: PixelTheme.text,
-                          fontSize: 11.5,
-                          height: 1.4,
+                    SizedBox(
+                      width: double.infinity,
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text(
+                          'SACAR VIA FAUCETPAY (LTC)',
+                          style: PixelTheme.title.copyWith(color: PixelTheme.text),
                         ),
                       ),
-                    ],
+                    ),
+                    const SizedBox(height: 6),
+                    LayoutBuilder(
+                      builder: (BuildContext context, BoxConstraints constraints) {
+                        return SizedBox(
+                          height: 6,
+                          width: constraints.maxWidth,
+                          child: CustomPaint(
+                            painter: _WalletDashPainter(),
+                            size: Size(constraints.maxWidth, 6),
+                          ),
+                        );
+                      },
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                const PixelIcon(matrix: PixelIcons.safe, palette: PixelIcons.palette, size: 48),
+                const SizedBox(height: 12),
+                const Text(
+                  'Converta seus coins em LTC e receba na sua conta FaucetPay.',
+                  textAlign: TextAlign.center,
+                  style: PixelTheme.label,
+                ),
+                const SizedBox(height: 16),
+                SizedBox(
+                  width: double.infinity,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    child: _buildForm(),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                SizedBox(
+                  width: double.infinity,
+                  child: Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: PixelTheme.cyan.withValues(alpha: 0.1),
+                      border: Border.all(color: PixelTheme.cyan.withValues(alpha: 0.4)),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: const Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        Row(
+                          children: <Widget>[
+                            Icon(Icons.info_outline, size: 16, color: PixelTheme.cyan),
+                            SizedBox(width: 6),
+                            Text(
+                              'COMO FUNCIONA',
+                              style: TextStyle(
+                                color: PixelTheme.cyan,
+                                fontWeight: FontWeight.w800,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ),
+                        SizedBox(height: 6),
+                        Text(
+                          'Seus coins são convertidos em LTC na proporção de 1 COIN = 0,000001 LTC. O valor é enviado via FaucetPay para o seu e-mail ou endereço LTC vinculado.',
+                          style: TextStyle(
+                            color: PixelTheme.text,
+                            fontSize: 11.5,
+                            height: 1.4,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ],
@@ -463,27 +484,59 @@ class _PixelWalletScreenState extends ConsumerState<PixelWalletScreen> {
   }
 
   Widget _buildForm() {
-    final BigInt available =
-        ref.watch(walletStreamProvider).value?.availableBalance ?? BigInt.zero;
-    return WithdrawForm(
-      key: const ValueKey<String>('form_LTC'),
-      asset: WithdrawAssetInfo(
-        id: 'LTC',
-        network: 'FaucetPayEmail',
-        minWithdrawUnits:
-            BigInt.from(kMinWithdrawCoins) * BigInt.from(1000000),
-        maxPerWithdrawalUnits:
-            BigInt.from(kMaxPerWithdrawalCoins) * BigInt.from(1000000),
-        feeUnits: BigInt.from(kFeeCoins) * BigInt.from(1000000),
-        litoshiPerCoin: kLitoshiPerCoin,
-        displayRate: kDisplayRate,
-      ),
-      availableBalance: available,
-      amountCoins: _amountCoins,
-      submitting: _submitting,
-      onSubmit: (BigInt amount, String destination) => _submit(
-        amountUnits: amount,
-        destination: destination,
+    final AsyncValue<WalletModel?> walletAsync = ref.watch(walletStreamProvider);
+    final BigInt available = walletAsync.value?.availableBalance ?? BigInt.zero;
+    final AsyncValue<PayoutAsset?> ltcAsset = ref.watch(ltcPayoutAssetProvider);
+    return ltcAsset.when(
+      data: (asset) {
+        final BigInt minWithdraw = asset?.minWithdrawUnits ??
+            (BigInt.from(kMinWithdrawCoins) * BigInt.from(1000000));
+        final BigInt maxWithdraw = available; // saldo disponível como teto
+        final BigInt fee = asset?.feeUnits ??
+            (BigInt.from(kFeeCoins) * BigInt.from(1000000));
+        final int litoshiPerCoin = asset?.litoshiPerCoin ?? kLitoshiPerCoin;
+        final String displayRate = asset?.displayRate ?? kDisplayRate;
+        return WithdrawForm(
+          key: const ValueKey<String>('form_LTC'),
+          asset: WithdrawAssetInfo(
+            id: 'LTC',
+            network: 'FaucetPayEmail',
+            minWithdrawUnits: minWithdraw,
+            maxPerWithdrawalUnits: maxWithdraw,
+            feeUnits: fee,
+            litoshiPerCoin: litoshiPerCoin,
+            displayRate: displayRate,
+          ),
+          availableBalance: available,
+          amountCoins: _amountCoins,
+          submitting: _submitting,
+          onSubmit: (BigInt amount, String destination) => _submit(
+            amountUnits: amount,
+            destination: destination,
+          ),
+        );
+      },
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (e, stack) => WithdrawForm(
+        key: const ValueKey<String>('form_LTC'),
+        asset: WithdrawAssetInfo(
+          id: 'LTC',
+          network: 'FaucetPayEmail',
+          minWithdrawUnits:
+              BigInt.from(kMinWithdrawCoins) * BigInt.from(1000000),
+          maxPerWithdrawalUnits:
+              BigInt.from(kMaxPerWithdrawalCoins) * BigInt.from(1000000),
+          feeUnits: BigInt.from(kFeeCoins) * BigInt.from(1000000),
+          litoshiPerCoin: kLitoshiPerCoin,
+          displayRate: kDisplayRate,
+        ),
+        availableBalance: available,
+        amountCoins: _amountCoins,
+        submitting: _submitting,
+        onSubmit: (BigInt amount, String destination) => _submit(
+          amountUnits: amount,
+          destination: destination,
+        ),
       ),
     );
   }
@@ -542,4 +595,21 @@ String _rewardTitle(String type) {
     default:
       return type.isEmpty ? 'Movimentação' : type;
   }
+}
+
+class _WalletDashPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final Paint paint = Paint()..color = PixelTheme.purple;
+    double x = 0;
+    bool on = true;
+    while (x < size.width) {
+      if (on) canvas.drawRect(Rect.fromLTWH(x, 1.5, 6, 3), paint);
+      x += on ? 11 : 5;
+      on = !on;
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }

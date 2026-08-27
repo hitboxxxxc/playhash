@@ -30,6 +30,7 @@ import 'services/claim_service.dart';
 import 'services/cloud_functions_service.dart';
 import 'services/game_session_service.dart';
 import 'services/purchase_intent_service.dart';
+import '../data/repositories/payouts_repository.dart' show PayoutAsset;
 
 /// Provider único do serviço de autenticação (Riverpod é o state management
 /// exclusivo do projeto). Em testes, as telas aceitam override deste provider
@@ -429,3 +430,33 @@ final StreamProvider<List<RewardHistoryEntry>> rewardItemsStreamProvider =
       }
     });
 
+
+/// Provider do ativo LTC (config/payouts) — expõe minWithdrawCoins, feeCoins,
+/// litoshiPerCoin, subscriber, providerMinLitoshi vindos do backend.
+final FutureProvider<PayoutAsset?> ltcPayoutAssetProvider =
+    FutureProvider<PayoutAsset?>((Ref ref) async {
+  final config = await ref.watch(payoutsConfigProvider.future);
+  if (config == null) return null;
+  for (final asset in config.assets) {
+    if (asset.id == 'LTC') return asset;
+  }
+  return null;
+});
+
+/// Provider premium do usuário (users/{uid}.premium == true).
+final StreamProvider<bool> userPremiumProvider =
+    StreamProvider<bool>((Ref ref) async* {
+  try {
+    final String? uid = await ref.watch(currentUidProvider.future);
+    if (uid == null) {
+      yield false;
+      return;
+    }
+    yield* ref
+        .watch(profileRepositoryProvider)
+        .watchOwnProfile(uid)
+        .map((profile) => profile?['premium'] == true);
+  } catch (_) {
+    yield false;
+  }
+});
