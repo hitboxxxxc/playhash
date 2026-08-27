@@ -4,16 +4,16 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:playhash/core/providers.dart';
 import 'package:playhash/core/services/auth_service.dart';
-import 'package:playhash/core/services/purchase_intent_service.dart';
 import 'package:playhash/data/models/machine_catalog_model.dart';
 import 'package:playhash/data/models/machine_model.dart';
+import 'package:playhash/data/models/power_model.dart';
 import 'package:playhash/data/models/wallet_model.dart';
 import 'package:playhash/data/repositories/machine_catalog_repository.dart';
 import 'package:playhash/data/repositories/machines_repository.dart';
 import 'package:playhash/data/repositories/mining_repository.dart';
+import 'package:playhash/data/repositories/power_repository.dart';
 import 'package:playhash/data/repositories/wallet_repository.dart';
 import 'package:playhash/features/machines/pixel_sala_screen.dart';
-import 'package:playhash/core/widgets/pixel_button.dart';
 
 class _FakeUser implements User {
   @override
@@ -85,6 +85,16 @@ class _FakeMachinesRepository implements MachinesRepositoryApi {
       Stream<List<MachineModel>>.value(machines);
 }
 
+class _FakePowerRepository implements PowerRepositoryApi {
+  _FakePowerRepository(this.power);
+  PowerModel? power;
+  @override
+  Future<PowerModel?> loadPower(String uid) async => power;
+  @override
+  Stream<PowerModel?> watchPower(String uid) =>
+      Stream<PowerModel?>.value(power);
+}
+
 class _FakeMiningRepository implements MiningRepositoryApi {
   @override
   Future<BlockSnapshot?> loadBlockSnapshot() async => null;
@@ -99,58 +109,15 @@ class _FakeMiningRepository implements MiningRepositoryApi {
   @override
   RewardEstimate? estimateReward(
       {required int yourPower, BlockSnapshot? block}) {
-    return null; // sem bloco oficial => '0,00' (mesma fonte da home)
+    return null;
   }
-}
-
-/// Serviço de compra fake que registra se uma compra imediata foi feita.
-class _FakePurchaseService extends PurchaseIntentService {
-  _FakePurchaseService() : super(repository: _FakeIntentsRepo());
-  bool called = false;
-
-  @override
-  Future<void> buyMachineNow({
-    required String uid,
-    required MachineCatalogModel machine,
-  }) async {
-    called = true;
-  }
-
-  @override
-  Future<void> upgradeMachineNow({
-    required String uid,
-    required MachineCatalogModel machine,
-    required int currentLevel,
-  }) async {
-    called = true;
-  }
-}
-
-class _FakeIntentsRepo implements PurchaseIntentsRepositoryApi {
-  final List<String> created = <String>[];
-  @override
-  Future<void> createIntent({
-    required String clientRequestId,
-    required String uid,
-    required String machineId,
-  }) async {
-    created.add(machineId);
-  }
-
-  @override
-  Future<PurchaseIntentResult?> readIntent(String clientRequestId) async =>
-      null;
-
-  @override
-  Stream<PurchaseIntentResult> watchIntent(String clientRequestId) =>
-      const Stream<PurchaseIntentResult>.empty();
 }
 
 Future<void> _pumpSala(
   WidgetTester tester, {
   required List<MachineModel> owned,
+  int powerBase = 18500,
 }) async {
-  final _FakePurchaseService purchaseService = _FakePurchaseService();
   await tester.binding.setSurfaceSize(const Size(320, 700));
   addTearDown(() => tester.binding.setSurfaceSize(null));
 
@@ -173,8 +140,10 @@ Future<void> _pumpSala(
         ),
         machinesRepositoryProvider
             .overrideWithValue(_FakeMachinesRepository(owned)),
+        powerRepositoryProvider.overrideWithValue(
+          _FakePowerRepository(PowerModel(totalPower: powerBase, permanentPower: powerBase, temporaryPower: 0)),
+        ),
         miningRepositoryProvider.overrideWithValue(_FakeMiningRepository()),
-        purchaseIntentServiceProvider.overrideWithValue(purchaseService),
       ],
       child: const MaterialApp(home: PixelSalaScreen()),
     ),
@@ -183,7 +152,7 @@ Future<void> _pumpSala(
 }
 
 void main() {
-  testWidgets('SALA em 320dp: catálogo fake renderiza sem overflow',
+  testWidgets('SALA em 320dp: 2 owned (nv1 e nv3) + 18500 power renderiza sem overflow',
       (WidgetTester tester) async {
     await _pumpSala(
       tester,
@@ -195,44 +164,31 @@ void main() {
           power: 250,
           active: true,
         ),
+        MachineModel(
+          id: 'item-2',
+          type: 'rig-nova',
+          level: 3,
+          power: 3000,
+          active: true,
+        ),
       ],
+      powerBase: 18500,
     );
 
-    // Nenhum erro de layout ("overflowed") em 320dp.
+    // Sem overflow em 320dp
     expect(tester.takeException(), isNull);
 
-    // Header + estrutura.
-    expect(find.text('PODER TOTAL'), findsOneWidget);
+    // Textos exigidos
+    expect(find.text('PODER TOTAL'), findsWidgets);
     expect(find.text('LOJA'), findsOneWidget);
-    expect(find.text('SALA'), findsOneWidget);
-
-    // Máquinas do catálogo: 1 owned (NÍVEL 1 / APRIMORAR) + 1 não owned
-    // (COMPRAR).
+    expect(find.text('SUA SALA'), findsOneWidget);
     expect(find.text('RIG SCRAP'), findsOneWidget);
     expect(find.text('RIG NOVA'), findsOneWidget);
-    expect(find.textContaining('APRIMORAR'), findsOneWidget);
-    expect(find.text('COMPRAR'), findsWidgets); // 2 máquinas, 1 owned + 1 not owned
-    expect(find.text('ATIVA'), findsOneWidget);
-    expect(find.text('INATIVA'), findsOneWidget);
+    expect(find.text('APRIMORAR'), findsWidgets);
+    expect(find.text('IR PARA LOJA'), findsWidgets);
   });
 
-  testWidgets('SALA: botão COMPRAR está presente e clicável',
-      (WidgetTester tester) async {
-    await _pumpSala(
-      tester,
-      owned: const <MachineModel>[],
-    );
-
-    // Toca no botão COMPRAR (último PixelButton = máquina não owned).
-    final List<Widget> buttons = find.byType(PixelButton).evaluate().map<Widget>((Element e) => e.widget).toList();
-    expect(buttons.length, greaterThanOrEqualTo(1));
-    expect(find.text('COMPRAR'), findsWidgets);
-    
-    // Tapping without real Firebase will throw FirebaseException/no-app, which is expected in pure widget tests without Firebase core initialized.
-    // We just verify the button is present and rendered correctly.
-  });
-
-  testWidgets('SALA: botão APRIMORAR presente para máquina owned',
+  testWidgets('SALA: tocar na máquina abre sheet de detalhes com PRÓXIMO NÍVEL',
       (WidgetTester tester) async {
     await _pumpSala(
       tester,
@@ -246,51 +202,31 @@ void main() {
         ),
       ],
     );
-    expect(find.textContaining('APRIMORAR'), findsOneWidget);
+
+    expect(find.text('RIG SCRAP'), findsOneWidget);
+    // Toca na card da máquina (fora do botão aprimorar)
+    await tester.tap(find.text('RIG SCRAP'));
+    await tester.pumpAndSettle();
+
+    // Sheet de detalhes deve abrir com 'PRÓXIMO NÍVEL'
+    expect(find.textContaining('PRÓXIMO NÍVEL'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
   testWidgets('SALA: chip NÍVEL MÁX para máquina no nível máximo',
       (WidgetTester tester) async {
-    await tester.binding.setSurfaceSize(const Size(320, 700));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
-
-    final _FakePurchaseService purchaseService = _FakePurchaseService();
-    await tester.pumpWidget(
-      ProviderScope(
-        overrides: [
-          authServiceProvider.overrideWithValue(_FakeAuthService()),
-          machineCatalogRepositoryProvider.overrideWithValue(
-            _FakeCatalogRepository(kFakeCatalog),
-          ),
-          walletRepositoryProvider.overrideWithValue(
-            _FakeWalletRepository(
-              WalletModel(
-                internalBalance: BigInt.from(10000000000),
-                availableBalance: BigInt.from(10000000000),
-                pendingBalance: BigInt.zero,
-                lifetimeEarned: BigInt.from(10000000000),
-              ),
-            ),
-          ),
-          machinesRepositoryProvider.overrideWithValue(
-            _FakeMachinesRepository(const <MachineModel>[
-              MachineModel(
-                id: 'item-1',
-                type: 'rig-scrap',
-                level: 5,
-                power: 250,
-                active: true,
-              ),
-            ]),
-          ),
-          miningRepositoryProvider.overrideWithValue(_FakeMiningRepository()),
-          purchaseIntentServiceProvider.overrideWithValue(purchaseService),
-        ],
-        child: const MaterialApp(home: PixelSalaScreen()),
-      ),
+    await _pumpSala(
+      tester,
+      owned: const <MachineModel>[
+        MachineModel(
+          id: 'item-1',
+          type: 'rig-scrap',
+          level: 5,
+          power: 250,
+          active: true,
+        ),
+      ],
     );
-    await tester.pumpAndSettle();
 
     expect(find.text('NÍVEL MÁX'), findsOneWidget);
     expect(tester.takeException(), isNull);
