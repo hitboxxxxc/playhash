@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../features/achievements/achievements_screen.dart';
@@ -12,17 +12,14 @@ import '../../features/games/games_screen.dart';
 import '../../features/home/home_screen.dart';
 import '../../features/leagues/leagues_screen.dart';
 import '../../features/missions/missions_screen.dart';
-import '../../features/mining/mining_screen.dart';
 import '../../features/profile/account_screen.dart';
 import '../../features/profile/history_screen.dart';
-import '../../features/profile/profile_screen.dart';
 import '../../features/season_pass/season_screen.dart';
 import '../../features/wallet/wallet_screen.dart';
 import '../../features/settings/settings_screen.dart';
-import '../../features/shell/main_shell.dart';
 import '../../features/splash/auth_gate.dart';
-import '../../features/store/store_screen.dart';
 import '../services/auth_service.dart';
+import '../widgets/pixel_shell.dart';
 
 /// Caminhos de rota — fonte única de verdade para navegação.
 abstract final class RoutePaths {
@@ -129,51 +126,29 @@ GoRouter createAppRouter({AuthServiceApi? auth, String? initialLocation}) {
         path: RoutePaths.season,
         builder: (_, _) => const SeasonScreen(),
       ),
-      StatefulShellRoute.indexedStack(
-        builder: (_, _, StatefulNavigationShell navigationShell) =>
-            MainShell(navigationShell: navigationShell),
-        branches: <StatefulShellBranch>[
-          StatefulShellBranch(
-            routes: <RouteBase>[
-              GoRoute(
-                path: RoutePaths.home,
-                builder: (_, _) => const HomeScreen(),
-              ),
+      GoRoute(
+        path: '/app',
+        builder: (BuildContext context, GoRouterState state) {
+          return PixelShell(
+            balanceText: '—',
+            pages: const [
+              HomeScreen(),
+              _SalaPlaceholder(),
+              GamesScreen(),
+              WalletScreen(),
             ],
-          ),
-          StatefulShellBranch(
-            routes: <RouteBase>[
-              GoRoute(
-                path: RoutePaths.games,
-                builder: (_, _) => const GamesScreen(),
-              ),
+            menuItems: [
+              PixelMenuItem(label: 'Mineração', onTap: () => context.push(RoutePaths.mining)),
+              PixelMenuItem(label: 'Loja', onTap: () => context.push(RoutePaths.store)),
+              PixelMenuItem(label: 'Missões', onTap: () => context.push(RoutePaths.missions)),
+              PixelMenuItem(label: 'Conquistas', onTap: () => context.push(RoutePaths.achievements)),
+              PixelMenuItem(label: 'Ligas', onTap: () => context.push(RoutePaths.leagues)),
+              PixelMenuItem(label: 'Temporada', onTap: () => context.push(RoutePaths.season)),
+              PixelMenuItem(label: 'Perfil', onTap: () => context.push(RoutePaths.profile)),
+              PixelMenuItem(label: 'Configurações', onTap: () => context.push(RoutePaths.settings)),
             ],
-          ),
-          StatefulShellBranch(
-            routes: <RouteBase>[
-              GoRoute(
-                path: RoutePaths.mining,
-                builder: (_, _) => const MiningScreen(),
-              ),
-            ],
-          ),
-          StatefulShellBranch(
-            routes: <RouteBase>[
-              GoRoute(
-                path: RoutePaths.store,
-                builder: (_, _) => const StoreScreen(),
-              ),
-            ],
-          ),
-          StatefulShellBranch(
-            routes: <RouteBase>[
-              GoRoute(
-                path: RoutePaths.profile,
-                builder: (_, _) => const ProfileScreen(),
-              ),
-            ],
-          ),
-        ],
+          );
+        },
       ),
     ],
   );
@@ -181,6 +156,20 @@ GoRouter createAppRouter({AuthServiceApi? auth, String? initialLocation}) {
 
 /// Roteador global da aplicação (produção).
 final GoRouter appRouter = createAppRouter();
+
+class _SalaPlaceholder extends StatelessWidget {
+  const _SalaPlaceholder();
+  @override
+  Widget build(BuildContext context) {
+    return const Center(
+      child: Padding(
+        padding: EdgeInsets.all(16),
+        child: Text('SALA — próxima etapa',
+            style: TextStyle(color: Color(0xFF9AA3B8))),
+      ),
+    );
+  }
+}
 
 /// Stream de mudanças de autenticação tolerante a Firebase não inicializado
 /// (ex.: ambiente de teste sem google-services.json).
