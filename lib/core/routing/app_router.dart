@@ -11,6 +11,7 @@ import '../../features/auth/register_screen.dart';
 import '../../features/common/coming_soon_screen.dart';
 import '../../features/games/games_screen.dart';
 import '../../features/home/pixel_home_screen.dart';
+import '../../features/machines/pixel_sala_screen.dart';
 import '../../features/leagues/leagues_screen.dart';
 import '../../features/missions/missions_screen.dart';
 import '../../features/profile/account_screen.dart';
@@ -165,7 +166,7 @@ GoRouter createAppRouter({AuthServiceApi? auth, String? initialLocation}) {
                 indexNotifier: shellIndex,
                 pages: [
                   PixelHomeScreen(onPlayGames: () => shellIndex.value = 2),
-                  const _SalaPlaceholder(),
+                  const PixelSalaScreen(),
                   const GamesScreen(),
                   const WalletScreen(),
                 ],
@@ -195,20 +196,6 @@ GoRouter createAppRouter({AuthServiceApi? auth, String? initialLocation}) {
 
 /// Roteador global da aplicação (produção).
 final GoRouter appRouter = createAppRouter();
-
-class _SalaPlaceholder extends StatelessWidget {
-  const _SalaPlaceholder();
-  @override
-  Widget build(BuildContext context) {
-    return const Center(
-      child: Padding(
-        padding: EdgeInsets.all(16),
-        child: Text('SALA — próxima etapa',
-            style: TextStyle(color: Color(0xFF9AA3B8))),
-      ),
-    );
-  }
-}
 
 /// Stream de mudanças de autenticação tolerante a Firebase não inicializado
 /// (ex.: ambiente de teste sem google-services.json).

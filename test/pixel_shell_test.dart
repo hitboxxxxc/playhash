@@ -11,6 +11,7 @@ void main() {
       MaterialApp(
         home: PixelShell(
           balanceText: '1.250',
+          indexNotifier: ValueNotifier(0),
           pages: [
             Container(color: Colors.red, child: const Text('Home')),
             Container(color: Colors.green, child: const Text('Sala')),
