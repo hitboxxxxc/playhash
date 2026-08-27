@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import '../theme/pixel_theme.dart';
 import 'pixel_topbar.dart';
 import 'pixel_bottomnav.dart';
+import '../navigation/loja_notifier.dart';
+import '../../features/store/pixel_loja_screen.dart';
 
 class PixelMenuItem {
   final String label;
@@ -28,6 +30,28 @@ class PixelShell extends StatefulWidget {
 }
 
 class _PixelShellState extends State<PixelShell> {
+  @override
+  void initState() {
+    super.initState();
+    LojaNav.goToTab.addListener(_handleGoToTab);
+  }
+
+  @override
+  void dispose() {
+    LojaNav.goToTab.removeListener(_handleGoToTab);
+    super.dispose();
+  }
+
+  void _handleGoToTab() {
+    final int t = LojaNav.goToTab.value;
+    if (t >= 0) {
+      LojaNav.goToTab.value = -1;
+      setState(() {
+        widget.indexNotifier.value = t;
+      });
+    }
+  }
+
   void _openMenu() {
     showModalBottomSheet(
       backgroundColor: PixelTheme.panel,
@@ -61,18 +85,29 @@ class _PixelShellState extends State<PixelShell> {
       body: SafeArea(
         top: true,
         bottom: false,
-        child: Column(
-          children: [
-            PixelTopbar(balanceText: widget.balanceText, onSettings: _openMenu),
-            const SizedBox(height: 10),
-            Expanded(
-              child: ValueListenableBuilder<int>(
-                valueListenable: widget.indexNotifier,
-                builder: (BuildContext context, int index, Widget? child) =>
-                    IndexedStack(index: index, children: widget.pages),
-              ),
-            ),
-          ],
+        child: ValueListenableBuilder<bool>(
+          valueListenable: LojaNav.open,
+          builder: (context, lojaOpen, _) {
+            if (lojaOpen) {
+              return PixelLojaScreen(
+                onClose: LojaNav.fecharLoja,
+                onGoToSala: LojaNav.irParaSala,
+              );
+            }
+            return Column(
+              children: [
+                PixelTopbar(balanceText: widget.balanceText, onSettings: _openMenu),
+                const SizedBox(height: 10),
+                Expanded(
+                  child: ValueListenableBuilder<int>(
+                    valueListenable: widget.indexNotifier,
+                    builder: (BuildContext context, int index, Widget? child) =>
+                        IndexedStack(index: index, children: widget.pages),
+                  ),
+                ),
+              ],
+            );
+          },
         ),
       ),
       bottomNavigationBar: ValueListenableBuilder<int>(

@@ -15,8 +15,9 @@ import '../../data/models/wallet_model.dart';
 enum _LojaStatus { loading, ready, error }
 
 class PixelLojaScreen extends ConsumerStatefulWidget {
-  const PixelLojaScreen({super.key, required this.onGoToSala});
+  const PixelLojaScreen({super.key, this.onClose, required this.onGoToSala});
 
+  final VoidCallback? onClose;
   final VoidCallback onGoToSala;
 
   @override
@@ -377,7 +378,7 @@ class _PixelLojaScreenState extends ConsumerState<PixelLojaScreen> {
                   ),
                   const SizedBox(width: 4),
                   GestureDetector(
-                    onTap: () => Navigator.of(context).pop(),
+                    onTap: () => widget.onClose?.call(),
                     child: Container(
                       padding: const EdgeInsets.all(6),
                       decoration: BoxDecoration(

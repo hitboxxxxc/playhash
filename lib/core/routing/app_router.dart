@@ -21,6 +21,7 @@ import '../../features/season_pass/season_screen.dart';
 import '../../features/wallet/wallet_screen.dart';
 import '../../features/settings/settings_screen.dart';
 import '../../features/splash/auth_gate.dart';
+import '../navigation/loja_notifier.dart';
 import '../providers.dart';
 import '../services/auth_service.dart';
 import '../widgets/pixel_shell.dart';
@@ -173,7 +174,7 @@ GoRouter createAppRouter({AuthServiceApi? auth, String? initialLocation}) {
                   ],
                   menuItems: [
                     PixelMenuItem(label: 'Mineração', onTap: () => context.push(RoutePaths.mining)),
-                    PixelMenuItem(label: 'Loja', onTap: () => context.push(RoutePaths.store)),
+                    PixelMenuItem(label: 'Loja', onTap: () => LojaNav.abrirLoja()),
                     PixelMenuItem(label: 'Missões', onTap: () => context.push(RoutePaths.missions)),
                     PixelMenuItem(label: 'Conquistas', onTap: () => context.push(RoutePaths.achievements)),
                     PixelMenuItem(label: 'Ligas', onTap: () => context.push(RoutePaths.leagues)),

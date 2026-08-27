@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/providers.dart';
+import '../../core/navigation/loja_notifier.dart';
 import '../../core/routing/app_router.dart';
 import '../../core/theme/pixel_theme.dart';
 import '../../core/utils/coin_format.dart';
@@ -448,7 +449,7 @@ class _PixelSalaScreenState extends ConsumerState<PixelSalaScreen> {
                       SizedBox(
                         width: 105,
                         child: InkWell(
-                          onTap: () => context.push(RoutePaths.store),
+                          onTap: () => LojaNav.abrirLoja(),
                           child: Container(
                             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
                             decoration: BoxDecoration(
@@ -600,7 +601,7 @@ class _PixelSalaScreenState extends ConsumerState<PixelSalaScreen> {
                                             label: 'IR PARA LOJA',
                                             style: PixelButtonStyle.purple,
                                             full: false,
-                                            onPressed: () => context.push(RoutePaths.store),
+                                            onPressed: () => LojaNav.abrirLoja(),
                                           ),
                                         ],
                                       )
@@ -903,7 +904,7 @@ class _PixelSalaScreenState extends ConsumerState<PixelSalaScreen> {
                             label: 'IR PARA LOJA',
                             style: PixelButtonStyle.purple,
                             full: false,
-                            onPressed: () => context.push(RoutePaths.store),
+                            onPressed: () => LojaNav.abrirLoja(),
                           ),
                         ),
                       ],
