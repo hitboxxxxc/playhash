@@ -83,19 +83,19 @@ Interpretação do log:
 2. [ ] Depositar fundos na conta FaucetPay (saldo por ativo ≥ volume esperado).
 3. [ ] Revisar `config/payouts` v2: mínimos/taxas/conversão por ativo (tabela acima).
 4. [ ] Revisar antifraude: cooldown 24h, maxPerDay 3, idade mínima 24h, ≥1 jogo finalizado,
-      lock `review` após 3 falhas de elegibilidade/dia (§36).
+       lock `review` após 3 falhas de elegibilidade/dia (§36).
 5. [ ] Testar ESTORNO: criar intent inválido pós-reserva em dev e confirmar
-      `REVERSAL` íntegro (available += amount, pending −= amount).
+       `REVERSAL` íntegro (available += amount, pending −= amount).
 6. [ ] Micro-teste real (opcional, endereço do DONO):
-      ```bash
-      gh workflow run econ-cron --repo hitboxxxxc/playhash \
-        -f action=payoutLiveTest -f payoutAsset=DOGE \
-        -f payoutAddress=<endereço-do-dono> -f payoutAmount=
-      # payoutAmount vazio = providerMin da config (menor envio possível)
-      ```
-      Gate duplo: só executa com `PAYOUT_MODE=live` **E** inputs explícitos.
-      Não reserva saldo de usuário (usa a conta do provedor); auditoria `WITHDRAWAL_TEST`;
-      falha ⇒ log seguro, sem crash, sem estorno necessário.
+       ```bash
+       gh workflow run econ-cron --repo hitboxxxxc/playhash \
+         -f action=payoutLiveTest -f payoutAsset=DOGE \
+         -f payoutAddress=<endereço-do-dono> -f payoutAmount=
+       # payoutAmount vazio = providerMin da config (menor envio possível)
+       ```
+       Gate duplo: só executa com `PAYOUT_MODE=live` **E** inputs explícitos.
+       Não reserva saldo de usuário (usa a conta do provedor); auditoria `WITHDRAWAL_TEST`;
+       falha ⇒ log seguro, sem crash, sem estorno necessário.
 7. [ ] Virar live: `gh variable set PAYOUT_MODE --body live --repo hitboxxxxc/playhash`.
 
 ## 6. Rollback para TEST
@@ -113,7 +113,7 @@ andamento — acompanhar até zerar pendências antes/depois do rollback.
 - **Destino**: e-mail da conta FaucetPay do usuário (transferência INTERNA).
   NUNCA endereço externo de carteira. Campos do intent:
   `{uid, asset, amountUnits, destinationEmail, destinationMasked,
-  clientRequestId, createdAt, clientVersion}`.
+   clientRequestId, createdAt, clientVersion}`.
 - **Conversão FIXA** (`config/payouts` version 3): `1 COIN = 100 litoshi`
   (= 0,000001 LTC). Aritmética inteira: `litoshi = (coins − feeCoins) × 100`.
   Mínimo 20 COIN · taxa 2 COIN ⇒ mínimo líquido 1800 litoshi (0,000018 LTC).
@@ -218,16 +218,16 @@ flutter build apk --release --dart-define=FAUCETPAY_API_KEY=<chave-oficial>
 - `lib/core/services/payout/payout_provider.dart` — abstração §27 mantida;
 - `lib/core/services/payout/faucetpay_provider.dart` — POST
   `https://faucetpay.io/api/v1/send` `{api_key, currency:'LTC',
-  amount:<litoshi int>, to_user:<email>}`; timeout 15s; SEM retry automático;
-  erros mapeados p/ códigos seguros (`PROVIDER_ERROR`, `INVALID_AMOUNT`,
-  `INSUFFICIENT_PROVIDER_BALANCE`, `EMAIL_NOT_FOUND`, `RATE_LIMIT`);
+   amount:<litoshi int>, to_user:<email>}`; timeout 15s; SEM retry automático;
+   erros mapeados p/ códigos seguros (`PROVIDER_ERROR`, `INVALID_AMOUNT`,
+   `INSUFFICIENT_PROVIDER_BALANCE`, `EMAIL_NOT_FOUND`, `RATE_LIMIT`);
 - `withdrawal_service.withdraw()`:
   1. transação em `wallets/{uid}`: available ≥ amount ⇒ reserva
      (available −= amount, pending += amount); senão SALDO_INSUFICIENTE;
   2. payout com `litoshi = (amountCoins − feeCoins) × 100` (inteiro §20);
   3. SUCESSO: pending −= amount (total diminui) + `withdrawals/{clientRequestId}`
      `{uid, asset:'LTC', amountCoins, feeCoins, litoshi, destinationMasked,
-     status:'completed', providerReference, createdAt}`;
+      status:'completed', providerReference, createdAt}`;
   4. FALHA: estorno INTEGRAL (pending −= amount, available += amount) +
      registro `status:'failed'` + errorCode seguro;
 - Idempotência por clientRequestId: o MESMO id NUNCA é reenviado ao provedor;
@@ -260,7 +260,7 @@ flutter build apk --release --dart-define=FAUCETPAY_API_KEY=<chave-oficial>
 
 ### Provider automático na espec oficial
 
-- POST `https://faucetpay.io/api/v1/send`, body **form-urlencoded**
+- POST `https://facetpay.io/api/v1/send`, body **form-urlencoded**
   `{api_key, currency:'LTC', amount:<litoshi INTEIRO>, to_user:<email>}`;
   timeout 15s; NUNCA JSON body; NUNCA GET.
 - Sucesso SOMENTE se `JSON.status == 200` (a API NÃO retorna campo `success` —
@@ -325,9 +325,9 @@ status — Console bypassa rules).
 - **Owner:** dono do repo (único com acesso aos secrets no GitHub).
 - **Troca de chave:** `gh secret set FAUCETPAY_API_KEY` (nome apenas; valor nunca em chat/log).
 - **Suspeita de chave vazrada:** revogar na FaucetPay → cadastrar nova → rodar `payoutProbe`
-  → se necessário rollback para `test` durante a troca.
+   → se necessário rollback para `test` durante a troca.
 - **Falha de payout de usuário:** código seguro em `withdrawals/{id}.errorCode`;
-  estorno automático + auditoria `WITHDRAWAL_FAILED`/`REWARD_REVERSED`.
+   estorno automático + auditoria `WITHDRAWAL_FAILED`/`REWARD_REVERSED`.
 
 ## 9. Garantias de segurança
 
@@ -336,4 +336,11 @@ status — Console bypassa rules).
   máscara (`ow***@example.com` / `bc1q…080`).
 - Nenhum payout real por padrão: exige `PAYOUT_MODE=live` + ação humana explícita.
 - Idempotência: `clientRequestId` como ID do withdrawal ⇒ crash entre reserva e payout
-  retoma SEM duplicar pagamento.
+   retoma SEM duplicar pagamento.
+
+## COMPRA E UPGRADE IMEDIATOS (DECISÃO DO DONO)
+
+Compras e upgrades de máquinas são processados IMEDIATAMENTE no cliente via transação
+Firestore; valida-se apenas o saldo real (wallets/{uid}) e os valores ancorados no
+catálogo config/machines pelas rules. Exceção deliberada à autoridade do runner (doc 05
+§15) por decisão do dono. Runner mantém blocos/sessões/missões.

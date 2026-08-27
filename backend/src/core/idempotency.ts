@@ -28,3 +28,22 @@ export async function findDoneIntentByClientRequestId(
 export function txIdFor(periodKey: string, uid: string): string {
   return `${periodKey}_${uid}`;
 }
+
+/**
+ * Procura por uma máquina já existente criada por um intent específico.
+ * Retorna o document reference da máquina se encontrado, senão null.
+ */
+export async function findMachineByIntent(
+  db: Firestore,
+  uid: string,
+  machineId: string,
+  clientRequestId: string,
+): Promise<string | null> {
+  const machinesSnap = await db
+    .collection(`machines/${uid}/items`)
+    .where('machineId', '==', machineId)
+    .where('purchaseIntentId', '==', clientRequestId)
+    .limit(1)
+    .get();
+  return machinesSnap.empty ? null : machinesSnap.docs[0]!.id;
+}

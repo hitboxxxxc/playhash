@@ -4,6 +4,33 @@ import 'dart:math';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../../core/constants/collections.dart';
+import '../../data/models/machine_catalog_model.dart';
+
+/// Null-safe helper to extract active temporary power.
+/// Returns 0 if power map is null, temp power expired, or fields missing.
+int _activeTemporaryPower(Map<String, dynamic>? power) {
+  if (power == null) return 0;
+  final Object? exp = power['temporaryPowerExpiresAt'];
+  final int temp = _intField(power, 'temporaryPower');
+  if (exp is Timestamp &&
+      exp.millisecondsSinceEpoch > DateTime.now().millisecondsSinceEpoch) {
+    return temp;
+  }
+  return 0;
+}
+
+/// Null-safe int extraction from a map (tolerant: String/num).
+int _intField(Map<String, dynamic>? data, String key) {
+  final Object? v = data?[key];
+  if (v is int) return v;
+  if (v is num) return v.toInt();
+  if (v is String) {
+    final s = v.trim();
+    return int.tryParse(s) ?? (double.tryParse(s)?.toInt() ?? 0);
+  }
+  return 0;
+}
+
 
 /// Resultado de uma intent de compra observada (espelho de leitura — a
 /// validação econômica é 100% do runner; o cliente nunca decide valores).
@@ -51,7 +78,7 @@ class MachineUpgradeIntentResult {
         status: (data['status'] as String?) ?? 'pending',
         failureCode: data['failureCode'] as String?,
         newLevel: data['newLevel'] != null
-            ? (data['newLevel'] as num).toInt()
+            ? _intField(data, 'newLevel')
             : null,
       );
 }
@@ -314,4 +341,139 @@ class PurchaseIntentService {
         return 'A operação não pôde ser concluída. Tente novamente mais tarde.';
     }
   }
+
+  // ===== FUNÇÕES IMEDIATAS (DECISÃO DO DONO) =====
+
+  /// Compra imediata de uma máquina via transação Firestore.
+  Future<void> buyMachineNow({
+    required String uid,
+    required MachineCatalogModel machine,
+  }) async {
+    final FirebaseFirestore db = FirebaseFirestore.instance;
+    await db.runTransaction((Transaction tx) async {
+      // ===== FASE A — SOMENTE LEITURAS =====
+      final walletRef = db.doc('wallets/$uid');
+      final powerRef = db.doc('power/$uid');
+      final machineRef = db.collection('machines/$uid/items').doc();
+
+      final walletSnap = await tx.get(walletRef);
+      final powerSnap = await tx.get(powerRef);
+      final machineSnap = await tx.get(machineRef);
+
+      final wallet = walletSnap.data();
+      final power = powerSnap.data();
+
+      final int balance = _intField(wallet, 'availableBalance');
+      final int price = machine.priceUnits.toInt();
+      final int machinePower = machine.powerUnits.toInt();
+
+      if (machineSnap.exists) {
+        throw FirebaseException(
+          plugin: 'cloud_firestore',
+          code: 'JA_POSSUIDA',
+          message: 'Machine already owned',
+        );
+      }
+      if (balance < price) {
+        throw FirebaseException(
+          plugin: 'cloud_firestore',
+          code: 'SALDO_INSUFICIENTE',
+          message: 'Insufficient balance',
+        );
+      }
+
+      final int permanent = _intField(power, 'permanentPower');
+      final int activeTemp = _activeTemporaryPower(power);
+      final int newPermanent = permanent + machinePower;
+
+      // ===== FASE B — SOMENTE ESCRITAS =====
+      tx.update(walletRef, {'availableBalance': balance - price});
+      tx.set(machineRef, {
+        'type': machine.id,
+        'level': 1,
+        'power': machinePower,
+        'active': true,
+        'purchasedAt': FieldValue.serverTimestamp(),
+      });
+      tx.update(powerRef, {
+        'permanentPower': newPermanent,
+        'totalPower': newPermanent + activeTemp,
+      });
+    });
+  }
+
+  /// Upgrade imediato de uma máquina via transação Firestore.
+  Future<void> upgradeMachineNow({
+    required String uid,
+    required MachineCatalogModel machine,
+    required int currentLevel,
+  }) async {
+    final FirebaseFirestore db = FirebaseFirestore.instance;
+    await db.runTransaction((Transaction tx) async {
+      // ===== FASE A — LEITURAS =====
+      final walletRef = db.doc('wallets/$uid');
+      final powerRef = db.doc('power/$uid');
+      final machineRef = db.collection('machines/$uid/items').doc();
+
+      final walletSnap = await tx.get(walletRef);
+      final powerSnap = await tx.get(powerRef);
+      final machineSnap = await tx.get(machineRef);
+
+      final machineData = machineSnap.data();
+      if (machineData == null) {
+        throw FirebaseException(
+          plugin: 'cloud_firestore',
+          code: 'NAO_POSSUIDA',
+          message: 'Machine not owned',
+        );
+      }
+
+      final int level = _intField(machineData, 'level');
+      final int maxLevel = machine.maxLevel;
+      if (level >= maxLevel) {
+        throw FirebaseException(
+          plugin: 'cloud_firestore',
+          code: 'NIVEL_MAX',
+          message: 'Max level reached',
+        );
+      }
+
+      final int cost = _calculateUpgradeCost(machine, level);
+      final int balance = _intField(walletSnap.data(), 'availableBalance');
+      if (balance < cost) {
+        throw FirebaseException(
+          plugin: 'cloud_firestore',
+          code: 'SALDO_INSUFICIENTE',
+          message: 'Insufficient balance',
+        );
+      }
+
+      final int oldPower = _intField(machineData, 'power');
+      final int basePower = machine.powerUnits;
+      final int newPower = (basePower * (100 + 25 * level)) ~/ 100; // nível+1, inteiro
+      final int delta = newPower - oldPower;
+
+      final power = powerSnap.data();
+      final int permanent = _intField(power, 'permanentPower');
+      final int activeTemp = _activeTemporaryPower(power);
+
+      // ===== FASE B — ESCRITAS =====
+      tx.update(walletRef, {'availableBalance': balance - cost});
+      tx.update(machineRef, {'level': level + 1, 'power': newPower});
+      tx.update(powerRef, {
+        'permanentPower': permanent + delta,
+        'totalPower': permanent + delta + activeTemp,
+      });
+    });
+  }
+
+  /// Calcula custo de upgrade: round(price * 0.75 * level) em base units.
+  /// Mantém a mesma fórmula já usada na tela.
+  int _calculateUpgradeCost(MachineCatalogModel machine, int currentLevel) {
+    final int price = machine.priceUnits.toInt();
+    final double factor = machine.upgradeCostFactor;
+    return (price * factor * currentLevel).round();
+  }
+
+  // Helper methods removed - not used
 }

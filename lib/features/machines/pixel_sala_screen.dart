@@ -15,7 +15,7 @@ import '../../data/models/machine_catalog_model.dart';
 import '../../data/models/machine_model.dart';
 import '../../data/models/power_model.dart';
 import '../../data/repositories/mining_repository.dart';
-import '../../core/services/purchase_intent_service.dart';
+import '../../core/services/machine_shop_service.dart';
 
 enum _SalaStatus { loading, ready, error }
 
@@ -118,30 +118,36 @@ class _PixelSalaScreenState extends ConsumerState<PixelSalaScreen> {
     final String? uid = _uid;
     if (uid == null) return;
     try {
-      final String requestId = await ref
-          .read(purchaseIntentServiceProvider)
-          .createIntent(uid: uid, machineId: machine.id);
-
+      await MachineShopService.buyMachine(
+        machineId: machine.id,
+        name: machine.name,
+        priceCoins: (machine.priceUnits ~/ BigInt.from(1000000)).toInt(),
+        powerBase: machine.powerUnits,
+      );
       if (!mounted) return;
-
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
+        const SnackBar(
           behavior: SnackBarBehavior.floating,
           content: Text(
-            'Solicitação de compra enviada (${machine.name})! ID: ${requestId.substring(0, 8)}...',
-            style: const TextStyle(color: PixelTheme.gold),
+            'Máquina instalada na sala',
+            style: TextStyle(color: PixelTheme.green),
           ),
         ),
       );
-
       _loadData();
-    } catch (e) {
+    } on PurchaseException catch (e) {
       if (!mounted) return;
+      final String msg = switch (e.code) {
+        'SALDO_INSUFICIENTE' => 'Saldo insuficiente',
+        'JA_POSSUIDA' => 'Máquina já instalada',
+        'SEM_LOGIN' => 'Entre na conta',
+        _ => e.code,
+      };
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           behavior: SnackBarBehavior.floating,
           content: Text(
-            e.toString(),
+            msg,
             style: const TextStyle(color: PixelTheme.red),
           ),
         ),
@@ -169,57 +175,37 @@ class _PixelSalaScreenState extends ConsumerState<PixelSalaScreen> {
     final String? uid = _uid;
     if (uid == null) return;
     try {
-      final String requestId = await ref
-          .read(purchaseIntentServiceProvider)
-          .createUpgradeIntent(uid: uid, machineId: machine.id);
-
-      if (!mounted) return;
-
-      // Escuta o resultado da intent
-      ref.read(purchaseIntentServiceProvider).watchUpgradeResult(requestId).listen(
-        (result) {
-          if (!mounted) return;
-          if (result.isDone) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                behavior: SnackBarBehavior.floating,
-                content: Text(
-                  'Máquina melhorada para nível ${currentLevel + 1}!',
-                  style: const TextStyle(color: PixelTheme.green),
-                ),
-              ),
-            );
-            _loadData();
-          } else if (result.isFailed) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                behavior: SnackBarBehavior.floating,
-                content: Text(
-                  PurchaseIntentService.failureMessage(result.failureCode),
-                  style: const TextStyle(color: PixelTheme.red),
-                ),
-              ),
-            );
-          }
-        },
+      await MachineShopService.upgradeMachine(
+        machineId: machine.id,
+        priceCoins: (machine.priceUnits ~/ BigInt.from(1000000)).toInt(),
+        powerBase: machine.powerUnits,
+        maxLevel: machine.maxLevel,
       );
-
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
+        const SnackBar(
           behavior: SnackBarBehavior.floating,
           content: Text(
-            'Solicitação de upgrade enviada!',
-            style: const TextStyle(color: PixelTheme.gold),
+            'Nível aprimorado',
+            style: TextStyle(color: PixelTheme.green),
           ),
         ),
       );
-    } catch (e) {
+      _loadData();
+    } on PurchaseException catch (e) {
       if (!mounted) return;
+      final String msg = switch (e.code) {
+        'SALDO_INSUFICIENTE' => 'Saldo insuficiente',
+        'NAO_POSSUIDA' => 'Máquina não possui',
+        'NIVEL_MAX' => 'Nível máximo',
+        'SEM_LOGIN' => 'Entre na conta',
+        _ => e.code,
+      };
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           behavior: SnackBarBehavior.floating,
           content: Text(
-            e.toString(),
+            msg,
             style: const TextStyle(color: PixelTheme.red),
           ),
         ),

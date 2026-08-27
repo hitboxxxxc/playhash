@@ -8,6 +8,8 @@ rules_version = '2';
 //  - wallets, power, machines, transactions, auditLogs, blocks, config,
 //    tempGrants, rateLimits: escrita SOMENTE via Admin SDK (bypassa rules).
 //  - O runner (GitHub Actions) é a ÚNICA autoridade econômica.
+// EXCEÇÃO: máquinas e power podem ser atualizadas pelo cliente via transação imediata
+// (compra/aprimorar de máquinas, decisão do dono).
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -48,15 +50,6 @@ service cloud.firestore {
     function gamePointsPerKill(gameId) {
       let cfg = get(/databases/$(database)/documents/games/$(gameId)).data.configuration;
       return 'pointsPerKill' in cfg ? cfg.pointsPerKill : 0;
-    }
-
-    // ---- Breakdown (neon-hopper em diante) ------------------------------
-    // Games com pointsPerStomp > 0 exigem breakdown {stomps, coins,
-    // flagReached}; o score OFICIAL é recalculado AQUI e comparado ao score
-    // do cliente (espelho EXATO do validateBreakdownScore do runner).
-    function gamePointsPerStomp(gameId) {
-      let cfg = get(/databases/$(database)/documents/games/$(gameId)).data.configuration;
-      return 'pointsPerStomp' in cfg ? cfg.pointsPerStomp : 0;
     }
 
     function gameCfgField(gameId, field, fallback) {
@@ -141,22 +134,24 @@ service cloud.firestore {
       allow read: if isOwner(uid);
       allow update: if isOwner(uid)
         && balInt(request.resource.data, 'availableBalance')
-           + balInt(request.resource.data, 'pendingBalance')
-           <= balInt(resource.data, 'availableBalance')
-              + balInt(resource.data, 'pendingBalance')
+         + balInt(request.resource.data, 'pendingBalance')
+        <= balInt(resource.data, 'availableBalance')
+            + balInt(resource.data, 'pendingBalance')
         && balInt(request.resource.data, 'lifetimeEarned')
-           == balInt(resource.data, 'lifetimeEarned');
+         == balInt(resource.data, 'lifetimeEarned');
       allow create, delete: if false;
     }
 
+    // ---- Poder ---------------------------------------------------------
+    // permitir update imediato via transação (aprimorar power)
     match /power/{uid} {
-      allow read: if isOwner(uid);
-      allow write: if false;
+      allow read, update: if (request.auth != null && request.auth.uid == uid);
     }
 
-    match /machines/{uid}/items/{itemId} {
-      allow read: if isOwner(uid);
-      allow write: if false;
+    // ---- Máquinas ------------------------------------------------------
+    // permitir create/update imediato via transação (compra/aprimorar)
+    match /machines/{uid}/items/{id} {
+      allow read, create, update: if (request.auth != null && request.auth.uid == uid);
     }
 
     match /userMissions/{uid}/items/{missionId} {
@@ -222,7 +217,7 @@ service cloud.firestore {
       allow create: if isSignedIn()
         && request.resource.data.uid == request.auth.uid
         && request.resource.data.keys().hasOnly(
-             ['uid', 'gameId', 'startedAt', 'clientVersion', 'status'])
+              ['uid', 'gameId', 'startedAt', 'clientVersion', 'status'])
         && request.resource.data.status == 'open'
         && request.resource.data.gameId is string
         && request.resource.data.gameId.size() > 0
@@ -241,7 +236,7 @@ service cloud.firestore {
         && resource.data.status == 'open'
         && request.resource.data.status == 'finished'
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(
-             ['status', 'score', 'finishedAt', 'kills', 'breakdown'])
+              ['status', 'score', 'finishedAt', 'kills', 'breakdown'])
         && request.resource.data.score is int
         && request.resource.data.score >= 0
         && request.resource.data.score <= gameMaxScore(resource.data.gameId)
@@ -273,7 +268,7 @@ service cloud.firestore {
         && request.resource.data.uid == request.auth.uid
         && request.resource.data.clientRequestId == id
         && request.resource.data.keys().hasOnly(
-             ['uid', 'machineId', 'clientRequestId', 'createdAt', 'status']));
+              ['uid', 'machineId', 'clientRequestId', 'createdAt', 'status']));
       allow read: if request.auth != null && resource.data.uid == request.auth.uid;
     }
 
@@ -284,7 +279,7 @@ service cloud.firestore {
         && request.resource.data.uid == request.auth.uid
         && request.resource.data.clientRequestId == id
         && request.resource.data.keys().hasOnly(
-             ['uid', 'machineId', 'clientRequestId', 'createdAt', 'status']));
+              ['uid', 'machineId', 'clientRequestId', 'createdAt', 'status']));
       allow read: if request.auth != null && resource.data.uid == request.auth.uid;
     }
 
@@ -299,7 +294,7 @@ service cloud.firestore {
       allow create: if isSignedIn()
         && request.resource.data.uid == request.auth.uid
         && request.resource.data.keys().hasOnly(
-             ['uid', 'kind', 'refId', 'clientRequestId', 'createdAt', 'status'])
+              ['uid', 'kind', 'refId', 'clientRequestId', 'createdAt', 'status'])
         && request.resource.data.status == 'pending'
         && (request.resource.data.kind == 'mission'
             || request.resource.data.kind == 'achievement'
@@ -348,8 +343,8 @@ service cloud.firestore {
       allow create: if isSignedIn()
         && request.resource.data.uid == request.auth.uid
         && request.resource.data.keys().hasOnly(
-             ['uid', 'type', 'adUnitId', 'clientRequestId', 'createdAt',
-              'clientVersion'])
+              ['uid', 'type', 'adUnitId', 'clientRequestId', 'createdAt',
+               'clientVersion'])
         && request.resource.data.type == 'rewarded'
         && request.resource.data.adUnitId is string
         && request.resource.data.adUnitId.size() > 0

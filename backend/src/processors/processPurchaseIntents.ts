@@ -1,23 +1,10 @@
-/**
- * Processador de intenções de compra (purchaseIntents).
- *
- * Para cada intent pendente: transação admin que lê preço/poder/limites
- * SOMENTE da config (config/machines/{machineId} — catálogo v2), valida saldo
- * em wallets/{uid}, maxPerUser e enabled, debita availableBalance, cria
- * machines/{uid}/items/{itemId}, soma permanentPower, marca intent
- * done/failed. Idempotência por clientRequestId.
- * Auditoria MACHINE_PURCHASED / PURCHASE_FAILED + espelho de histórico em
- * rewards/{uid}/items (mesmo padrão do espelho de blocos).
- *
- * validatePurchase é PURA e unit-testável sem Firestore.
- */
 import { FieldValue, Firestore } from 'firebase-admin/firestore';
 import { EconomyConfig, MachineDoc, ProcessingSummary } from '../core/types';
 import { getEconomyConfig } from '../core/config';
 import { toInt } from '../core/precision';
 import { recalcPower } from '../core/power';
 import { writeAudit, auditEventId } from '../core/audit';
-import { findDoneIntentByClientRequestId } from '../core/idempotency';
+import { findDoneIntentByClientRequestId, findMachineByIntent } from '../core/idempotency';
 import { incrementDailyCounter, readDailyCounter } from '../core/ratelimit';
 import { bumpAchievementProgress, bumpMissionProgress } from './mission_progress';
 
@@ -130,6 +117,17 @@ async function handleIntent(
     );
     if (doneRef !== null) {
       return await failIntent(db, intent, 'DUPLICATE_CLIENT_REQUEST_ID', ruleVersion);
+    }
+
+    // Nova verificação: máquina já criada para este intent?
+    const existingMachine = await findMachineByIntent(db, intent.uid, intent.machineId, intent.clientRequestId);
+    if (existingMachine) {
+      // Máquina já existe; marcar como done sem reprocessar
+      await db.doc(`purchaseIntents/${intent.id}`).update({
+        status: 'done',
+        processedAt: FieldValue.serverTimestamp(),
+      });
+      return 'rejected'; // Evitar concessão duplicada
     }
 
     const intentsToday = await readDailyCounter(db, intent.uid, 'intents', nowMs);
