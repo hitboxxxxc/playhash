@@ -57,3 +57,20 @@ abstract final class CoinFormat {
     return out.toString();
   }
 }
+
+/// 2 casas decimais TRUNCADAS (nunca arredonda pra cima): 1929394959... → "1.92"
+String fmtCoins2(int units) {
+  final int cents = units ~/ 10000; // unidades base 1e6 → centavos de coin
+  final int whole = cents ~/ 100;
+  final int frac = cents % 100;
+  final String s = whole.toString().replaceAllMapped(
+      RegExp(r'(\d)(?=(\d{3})+$)'), (m) => '${m[1]}.');
+  return '$s.${frac.toString().padLeft(2, '0')}';
+}
+
+String fmtLtc(int units) {
+  final double ltc = (units / 1000000) * 0.000001;
+  String t = ltc.toStringAsFixed(8);
+  if (t.contains('.')) t = t.replaceFirst(RegExp(r'0+$'), '').replaceFirst(RegExp(r'\.$'), '');
+  return t;
+}

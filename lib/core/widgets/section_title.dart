@@ -11,9 +11,11 @@ class SectionTitle extends StatelessWidget {
     return Row(
       children: [
         Expanded(child: _dashes()),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8),
-          child: Text(text.toUpperCase(), style: PixelTheme.title),
+        Flexible(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: Text(text.toUpperCase(), style: PixelTheme.title),
+          ),
         ),
         Expanded(child: _dashes()),
       ],
@@ -21,9 +23,17 @@ class SectionTitle extends StatelessWidget {
   }
 
   Widget _dashes() {
-    return SizedBox(
-      height: 6,
-      child: CustomPaint(painter: _DashPainter(), size: const Size(200, 6)),
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        return SizedBox(
+          height: 6,
+          width: constraints.maxWidth,
+          child: CustomPaint(
+            painter: _DashPainter(),
+            size: Size(constraints.maxWidth, 6),
+          ),
+        );
+      },
     );
   }
 }

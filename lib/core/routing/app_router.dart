@@ -18,7 +18,7 @@ import '../../features/missions/missions_screen.dart';
 import '../../features/profile/account_screen.dart';
 import '../../features/profile/history_screen.dart';
 import '../../features/season_pass/season_screen.dart';
-import '../../features/wallet/wallet_screen.dart';
+import '../../features/wallet/pixel_wallet_screen.dart';
 import '../../features/settings/settings_screen.dart';
 import '../../features/splash/auth_gate.dart';
 import '../navigation/loja_notifier.dart';
@@ -102,7 +102,7 @@ GoRouter createAppRouter({AuthServiceApi? auth, String? initialLocation}) {
       ),
       GoRoute(
         path: RoutePaths.wallet,
-        builder: (_, _) => const WalletScreen(),
+        builder: (_, _) => const PixelWalletScreen(),
       ),
       GoRoute(
         path: RoutePaths.settings,
@@ -170,7 +170,7 @@ GoRouter createAppRouter({AuthServiceApi? auth, String? initialLocation}) {
                     PixelHomeScreen(onPlayGames: () => shellIndex.value = 2),
                     const PixelSalaScreen(),
                     const GamesScreen(),
-                    const WalletScreen(),
+                    const PixelWalletScreen(),
                   ],
                   menuItems: [
                     PixelMenuItem(label: 'Mineração', onTap: () => context.push(RoutePaths.mining)),
