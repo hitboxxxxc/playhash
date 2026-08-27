@@ -12,6 +12,7 @@ import '../../features/common/coming_soon_screen.dart';
 import '../../features/games/games_screen.dart';
 import '../../features/home/pixel_home_screen.dart';
 import '../../features/machines/pixel_sala_screen.dart';
+import '../../features/store/pixel_loja_screen.dart';
 import '../../features/leagues/leagues_screen.dart';
 import '../../features/missions/missions_screen.dart';
 import '../../features/profile/account_screen.dart';
@@ -135,60 +136,66 @@ GoRouter createAppRouter({AuthServiceApi? auth, String? initialLocation}) {
         builder: (BuildContext context, GoRouterState state) {
           final ValueNotifier<int> shellIndex = ValueNotifier(0);
           return Consumer(
-            builder: (BuildContext context, WidgetRef ref, Widget? child) {
-              // Saldo real no topo — MESMO padrão do chip de saldo da home
-              // antiga: coins = availableBalance ~/ 1000000 (1 coin = 1e6
-              // unidades mínimas). Sem dado => "—".
-              // Formatação com separador de milhar (pt-BR: vírgula = decimal, ponto = milhar).
-              String fmtCoins(int v) {
-                final s = v.toString();
-                final b = StringBuffer();
-                int c = 0;
-                for (int i = s.length - 1; i >= 0; i--) {
-                  b.write(s[i]);
-                  c++;
-                  if (c % 3 == 0 && i != 0) b.write('.');
+              builder: (BuildContext context, WidgetRef ref, Widget? child) {
+                // Saldo real no topo — MESMO padrão do chip de saldo da home
+                // antiga: coins = availableBalance ~/ 1000000 (1 coin = 1e6
+                // unidades mínimas). Sem dado => "—".
+                // Formatação com separador de milhar (pt-BR: vírgula = decimal, ponto = milhar).
+                String fmtCoins(int v) {
+                  final s = v.toString();
+                  final b = StringBuffer();
+                  int c = 0;
+                  for (int i = s.length - 1; i >= 0; i--) {
+                    b.write(s[i]);
+                    c++;
+                    if (c % 3 == 0 && i != 0) b.write('.');
+                  }
+                  return b.toString().split('').reversed.join();
                 }
-                return b.toString().split('').reversed.join();
-              }
 
-              final AsyncValue<WalletModel?> walletAsync =
-                  ref.watch(walletStreamProvider);
-              final WalletModel? wallet = walletAsync.value;
-              final String balanceText = wallet?.availableBalance == null
-                  ? '—'
-                  : fmtCoins(
-                      (wallet!.availableBalance ~/ BigInt.from(1000000))
-                          .toInt(),
-                    );
-              return PixelShell(
-                balanceText: balanceText,
-                indexNotifier: shellIndex,
-                pages: [
-                  PixelHomeScreen(onPlayGames: () => shellIndex.value = 2),
-                  const PixelSalaScreen(),
-                  const GamesScreen(),
-                  const WalletScreen(),
-                ],
-                menuItems: [
-                  PixelMenuItem(label: 'Mineração', onTap: () => context.push(RoutePaths.mining)),
-                  PixelMenuItem(label: 'Loja', onTap: () => context.push(RoutePaths.store)),
-                  PixelMenuItem(label: 'Missões', onTap: () => context.push(RoutePaths.missions)),
-                  PixelMenuItem(label: 'Conquistas', onTap: () => context.push(RoutePaths.achievements)),
-                  PixelMenuItem(label: 'Ligas', onTap: () => context.push(RoutePaths.leagues)),
-                  PixelMenuItem(label: 'Temporada', onTap: () => context.push(RoutePaths.season)),
-                  PixelMenuItem(label: 'Perfil', onTap: () => context.push(RoutePaths.profile)),
-                  PixelMenuItem(label: 'Configurações', onTap: () => context.push(RoutePaths.settings)),
-                ],
-              );
-            },
-          );
+                final AsyncValue<WalletModel?> walletAsync =
+                    ref.watch(walletStreamProvider);
+                final WalletModel? wallet = walletAsync.value;
+                final String balanceText = wallet?.availableBalance == null
+                    ? '—'
+                    : fmtCoins(
+                        (wallet!.availableBalance ~/ BigInt.from(1000000))
+                            .toInt(),
+                      );
+                return PixelShell(
+                  balanceText: balanceText,
+                  indexNotifier: shellIndex,
+                  pages: [
+                    PixelHomeScreen(onPlayGames: () => shellIndex.value = 2),
+                    const PixelSalaScreen(),
+                    const GamesScreen(),
+                    const WalletScreen(),
+                  ],
+                  menuItems: [
+                    PixelMenuItem(label: 'Mineração', onTap: () => context.push(RoutePaths.mining)),
+                    PixelMenuItem(label: 'Loja', onTap: () => context.push(RoutePaths.store)),
+                    PixelMenuItem(label: 'Missões', onTap: () => context.push(RoutePaths.missions)),
+                    PixelMenuItem(label: 'Conquistas', onTap: () => context.push(RoutePaths.achievements)),
+                    PixelMenuItem(label: 'Ligas', onTap: () => context.push(RoutePaths.leagues)),
+                    PixelMenuItem(label: 'Temporada', onTap: () => context.push(RoutePaths.season)),
+                    PixelMenuItem(label: 'Perfil', onTap: () => context.push(RoutePaths.profile)),
+                    PixelMenuItem(label: 'Configurações', onTap: () => context.push(RoutePaths.settings)),
+                  ],
+                );
+              },
+            );
         },
       ),
       GoRoute(path: RoutePaths.home, redirect: (_, _) => '/app'),
       GoRoute(path: RoutePaths.games, redirect: (_, _) => '/app'),
       GoRoute(path: RoutePaths.mining, redirect: (_, _) => '/app'),
-      GoRoute(path: RoutePaths.store, redirect: (_, _) => '/app'),
+      GoRoute(
+        path: '/store',
+        builder: (BuildContext context, GoRouterState state) => PixelLojaScreen(
+          onGoToSala: () => Navigator.of(context).pop(),
+        ),
+      ),
+      GoRoute(path: '/loja', redirect: (_, _) => '/store'),
       GoRoute(path: RoutePaths.profile, redirect: (_, _) => '/app'),
     ],
   );

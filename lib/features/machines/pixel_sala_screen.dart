@@ -790,7 +790,7 @@ class _PixelSalaScreenState extends ConsumerState<PixelSalaScreen> {
                                       ),
                                       const SizedBox(height: 2),
                                       LinearProgressIndicator(
-                                        value: level / maxLevel,
+                                        value: (level / maxLevel).clamp(0.0, 1.0),
                                         color: PixelTheme.purple,
                                         backgroundColor: PixelTheme.border,
                                       ),

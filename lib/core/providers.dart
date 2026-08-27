@@ -407,6 +407,7 @@ final StreamProvider<List<WithdrawalModel>> withdrawalsStreamProvider =
           yield const <WithdrawalModel>[];
           return;
         }
+        
         yield* ref.watch(payoutsRepositoryProvider).watchUserWithdrawals(uid);
       } catch (_) {
         yield const <WithdrawalModel>[];

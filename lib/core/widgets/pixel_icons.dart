@@ -257,4 +257,19 @@ class PixelIcons {
     '............',
     '............',
   ];
+
+  static const List<String> shop = [
+    '.RRWWRRWWRR.',
+    '.RRWWRRWWRR.',
+    '.YYYYYYYYYY.',
+    '.YCCYYYYCCY.',
+    '.YCCYYYYCCY.',
+    '.YYYYKKYYYY.',
+    '.YYYYKKYYYY.',
+    '.YYYYKKYYYY.',
+    '.KKKKKKKKKK.',
+    '............',
+    '............',
+    '............',
+  ];
 }

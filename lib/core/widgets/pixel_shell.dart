@@ -68,7 +68,7 @@ class _PixelShellState extends State<PixelShell> {
             Expanded(
               child: ValueListenableBuilder<int>(
                 valueListenable: widget.indexNotifier,
-                builder: (_, index, __) =>
+                builder: (BuildContext context, int index, Widget? child) =>
                     IndexedStack(index: index, children: widget.pages),
               ),
             ),
@@ -77,9 +77,9 @@ class _PixelShellState extends State<PixelShell> {
       ),
       bottomNavigationBar: ValueListenableBuilder<int>(
         valueListenable: widget.indexNotifier,
-        builder: (_, index, __) => PixelBottomnav(
+        builder: (BuildContext context, int index, Widget? child) => PixelBottomnav(
           index: index,
-          onTab: (i) => widget.indexNotifier.value = i,
+          onTab: (int i) => widget.indexNotifier.value = i,
         ),
       ),
     );
