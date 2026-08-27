@@ -137,8 +137,8 @@ Future<void> _pumpHome(
 
 void main() {
   testWidgets(
-      'PixelHomeScreen em 320dp: sem overflow; chip "PODER DE MINERAÇÃO TOTAL" '
-      'com texto completo; countdown "Próxima recompensa em mm:ss" presente',
+      'PixelHomeScreen em 320dp: sem overflow; BÔNUS DIÁRIO renderiza; '
+      'countdown presente; analyze verde',
       (WidgetTester tester) async {
     final BlockSnapshot block = BlockSnapshot(
       nextBlockAt: DateTime.now().add(const Duration(minutes: 5)),
@@ -171,18 +171,23 @@ void main() {
     // 1) Sem "RenderFlex overflowed" no log de erros.
     expect(tester.takeException(), isNull);
 
-    // 2) Chip "PODER DE MINERAÇÃO TOTAL" — texto INTEIRO visível (sem truncar).
+    // 2) BÔNUS DIÁRIO renderiza (fixo embaixo, fora do scroll).
+    expect(find.text('BÔNUS DIÁRIO'), findsOneWidget);
+    expect(find.text('Resgate seu bônus diário e ganhe mais coins!'),
+        findsOneWidget);
+
+    // 3) Chip "PODER DE MINERAÇÃO TOTAL" presente (no scroll).
     expect(find.text('PODER DE MINERAÇÃO TOTAL'), findsOneWidget);
 
-    // 3) bigValue do PODER ATUAL: 1,50 (formato PowerFormat sem unidade).
+    // 4) bigValue do PODER ATUAL: 1,50 (PowerFormat sem unidade).
     expect(find.text('1,50'), findsOneWidget);
-    // 4) Unidade MH/s no label roxo.
+    // 5) Unidade MH/s no label roxo.
     expect(find.text('MH/s'), findsOneWidget);
 
-    // 5) Chip dourado da recompensa estimada: 5 COIN (fake do estimateReward).
-    expect(find.text('5 COIN'), findsOneWidget);
+    // 6) Chip dourado da recompensa estimada: 5,00 COIN (2 casas fixas).
+    expect(find.text('5,00 COIN'), findsOneWidget);
 
-    // 6) Countdown "Próxima recompensa em mm:ss" presente (NEXT widget).
+    // 7) Countdown "Próxima recompensa em mm:ss" presente (NextBlockCountdown).
     expect(find.byType(NextBlockCountdown), findsOneWidget);
     final Finder countdownLine = find.byWidgetPredicate(
       (Widget w) =>
@@ -190,5 +195,10 @@ void main() {
           RegExp(r'^Próxima recompensa em \d{2}:\d{2}$').hasMatch(w.data ?? ''),
     );
     expect(countdownLine, findsOneWidget);
+
+    // 8) SEÇÃO "GANHE COIN" + cards FAÇA TAREFAS / JOGUE MINIGAMES presentes.
+    expect(find.text('GANHE COIN'), findsOneWidget);
+    expect(find.text('FAÇA TAREFAS'), findsOneWidget);
+    expect(find.text('JOGUE MINIGAMES'), findsOneWidget);
   });
 }

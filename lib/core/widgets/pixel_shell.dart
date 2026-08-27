@@ -13,12 +13,14 @@ class PixelShell extends StatefulWidget {
   final String balanceText;
   final List<Widget> pages;
   final List<PixelMenuItem> menuItems;
+  final ValueNotifier<int> indexNotifier;
 
   const PixelShell({
     super.key,
     required this.balanceText,
     required this.pages,
     required this.menuItems,
+    required this.indexNotifier,
   });
 
   @override
@@ -26,8 +28,6 @@ class PixelShell extends StatefulWidget {
 }
 
 class _PixelShellState extends State<PixelShell> {
-  int _index = 0;
-
   void _openMenu() {
     showModalBottomSheet(
       backgroundColor: PixelTheme.panel,
@@ -58,14 +58,30 @@ class _PixelShellState extends State<PixelShell> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: PixelTheme.background,
-      body: Column(
-        children: [
-          PixelTopbar(balanceText: widget.balanceText, onSettings: _openMenu),
-          Expanded(child: IndexedStack(index: _index, children: widget.pages)),
-        ],
+      body: SafeArea(
+        top: true,
+        bottom: false,
+        child: Column(
+          children: [
+            PixelTopbar(balanceText: widget.balanceText, onSettings: _openMenu),
+            const SizedBox(height: 10),
+            Expanded(
+              child: ValueListenableBuilder<int>(
+                valueListenable: widget.indexNotifier,
+                builder: (_, index, __) =>
+                    IndexedStack(index: index, children: widget.pages),
+              ),
+            ),
+          ],
+        ),
       ),
-      bottomNavigationBar:
-          PixelBottomnav(index: _index, onTab: (i) => setState(() => _index = i)),
+      bottomNavigationBar: ValueListenableBuilder<int>(
+        valueListenable: widget.indexNotifier,
+        builder: (_, index, __) => PixelBottomnav(
+          index: index,
+          onTab: (i) => widget.indexNotifier.value = i,
+        ),
+      ),
     );
   }
 }

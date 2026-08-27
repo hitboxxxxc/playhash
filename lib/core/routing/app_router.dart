@@ -138,13 +138,28 @@ GoRouter createAppRouter({AuthServiceApi? auth, String? initialLocation}) {
               // Saldo real no topo — MESMO padrão do chip de saldo da home
               // antiga: coins = availableBalance ~/ 1000000 (1 coin = 1e6
               // unidades mínimas). Sem dado => "—".
+              // Formatação com separador de milhar (pt-BR: vírgula = decimal, ponto = milhar).
+              String fmtCoins(int v) {
+                final s = v.toString();
+                final b = StringBuffer();
+                int c = 0;
+                for (int i = s.length - 1; i >= 0; i--) {
+                  b.write(s[i]);
+                  c++;
+                  if (c % 3 == 0 && i != 0) b.write('.');
+                }
+                return b.toString().split('').reversed.join();
+              }
+
               final AsyncValue<WalletModel?> walletAsync =
                   ref.watch(walletStreamProvider);
               final WalletModel? wallet = walletAsync.value;
               final String balanceText = wallet?.availableBalance == null
                   ? '—'
-                  : (wallet!.availableBalance ~/ BigInt.from(1000000))
-                      .toString();
+                  : fmtCoins(
+                      (wallet!.availableBalance ~/ BigInt.from(1000000))
+                          .toInt(),
+                    );
               return PixelShell(
                 balanceText: balanceText,
                 indexNotifier: shellIndex,

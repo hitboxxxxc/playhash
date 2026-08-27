@@ -5,7 +5,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/providers.dart';
 import '../../core/theme/pixel_theme.dart';
-import '../../core/utils/coin_format.dart';
 import '../../core/utils/power_format.dart';
 import '../../core/widgets/next_block_countdown.dart';
 import '../../core/widgets/pixel_card.dart';
@@ -23,9 +22,10 @@ import '../../data/repositories/mining_repository.dart';
 ///   - ticker [NextBlockCountdown] `Próxima recompensa em mm:ss` usando o
 ///     MESMO widget compartilhado da MINERAÇÃO (alinhado ao servidor).
 ///
-/// Enquadramento: card com chip full-width + FittedBox + texto 10/letterSpacing
-/// 0.5 (sem truncar), colunas com Expanded + divisor vertical, paddings 12,
-/// Row com crossAxisAlignment.center. Linha do countdown ABAIXO do card.
+/// Estrutura:
+///   - Expanded + SingleChildScrollView (conteúdo rola: card poder, countdown, GANHE COIN)
+///   - BÔNUS DIÁRIO fixo embaixo (Padding), quase colado na BottomNav
+///   - SafeArea topo/baixo vem do [PixelShell].
 class PixelHomeScreen extends ConsumerStatefulWidget {
   final VoidCallback onPlayGames;
 
@@ -112,11 +112,31 @@ class _PixelHomeScreenState extends ConsumerState<PixelHomeScreen> {
     return spaceIdx > 0 ? formatted.substring(spaceIdx + 1) : 'H/s';
   }
 
-  /// Chip dourado da recompensa estimada: `<valor> COIN`.
-  /// `null` => `0 COIN` (nunca `—` com dado existente).
+  /// Chip dourado da recompensa estimada: `<valor> COIN` com 2 casas decimais
+  /// (ex.: `4,90 COIN`; se 0 => `0,00 COIN`). NUNCA `—` com dado existente.
   String _formatRewardChip(BigInt? minimalUnits) {
-    if (minimalUnits == null) return '0 COIN';
-    return CoinFormat.formatWithTicker(minimalUnits);
+    if (minimalUnits == null || minimalUnits == BigInt.zero) {
+      return '0,00 COIN';
+    }
+    // Converte unidades mínimas (escala 1e6) para decimal pt-BR com 2 casas.
+    final BigInt scale = BigInt.from(1000000);
+    final BigInt whole = minimalUnits ~/ scale;
+    final BigInt frac = (minimalUnits % scale).abs();
+    final String wholeStr = _groupThousands(whole.toString());
+    final String fracStr = frac.toString().padLeft(6, '0').substring(0, 2);
+    return '$wholeStr,$fracStr COIN';
+  }
+
+  /// Agrupa a parte inteira em blocos de 3 com `.` (pt-BR).
+  String _groupThousands(String digits) {
+    final StringBuffer out = StringBuffer();
+    final int len = digits.length;
+    for (int i = 0; i < len; i++) {
+      out.write(digits[i]);
+      final int remaining = len - i - 1;
+      if (remaining > 0 && remaining % 3 == 0) out.write('.');
+    }
+    return out.toString();
   }
 
   @override
@@ -130,255 +150,274 @@ class _PixelHomeScreenState extends ConsumerState<PixelHomeScreen> {
         .read(miningRepositoryProvider)
         .estimateReward(yourPower: totalPower ?? 0, block: _block);
 
-    return SingleChildScrollView(
+    // --- WIDGETS REUTILIZÁVEIS (extraídos inline para clareza) ---
+
+    // Card roxo: SEU PODER DE MINERAÇÃO
+    final Widget powerCard = PixelCard(
+      borderColor: PixelTheme.purple,
       padding: const EdgeInsets.all(12),
       child: Column(
         children: <Widget>[
-          PixelCard(
-            borderColor: PixelTheme.purple,
-            padding: const EdgeInsets.all(12),
-            child: Column(
-              children: <Widget>[
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: PixelTheme.purpleDark,
-                    border: Border.all(color: PixelTheme.purple, width: 2),
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      PixelIcon(
-                        matrix: PixelIcons.pickaxe,
-                        palette: PixelIcons.palette,
-                        size: 20,
-                      ),
-                      const SizedBox(width: 8),
-                      Flexible(
-                        child: FittedBox(
-                          fit: BoxFit.scaleDown,
-                          child: Text(
-                            'SEU PODER DE MINERAÇÃO',
-                            style: PixelTheme.title,
-                            maxLines: 1,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      PixelIcon(
-                        matrix: PixelIcons.pickaxe,
-                        palette: PixelIcons.palette,
-                        size: 20,
-                      ),
-                    ],
-                  ),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: PixelTheme.purpleDark,
+              border: Border.all(color: PixelTheme.purple, width: 2),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                PixelIcon(
+                  matrix: PixelIcons.pickaxe,
+                  palette: PixelIcons.palette,
+                  size: 20,
                 ),
-                const SizedBox(height: 12),
-                // Row de conteúdo: colunas com Expanded + divisor vertical +
-                // crossAxisAlignment.center. Paddings 12.
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    Expanded(
-                      child: Column(
-                        children: [
-                          Text('PODER ATUAL', style: PixelTheme.label),
-                          const SizedBox(height: 8),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              PixelIcon(
-                                matrix: PixelIcons.pickaxe,
-                                palette: PixelIcons.palette,
-                                size: 40,
-                              ),
-                              const SizedBox(width: 4),
-                              Flexible(
-                                child: Column(
-                                  children: [
-                                    FittedBox(
-                                      fit: BoxFit.scaleDown,
-                                      child: Text(
-                                        _formatPowerText(totalPower),
-                                        style: PixelTheme.bigValue,
-                                        maxLines: 1,
-                                      ),
-                                    ),
-                                    Text(
-                                      _formatPowerUnit(totalPower),
-                                      style: labelPurple,
-                                      maxLines: 1,
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                    Container(width: 1, color: PixelTheme.border),
-                    Expanded(
-                      child: Column(
-                        children: [
-                          Text(
-                            'RECOMPENSA A CADA 5 MINUTOS',
-                            style: PixelTheme.label,
-                          ),
-                          const SizedBox(height: 8),
-                          PixelIcon(
-                            matrix: PixelIcons.coin,
-                            palette: PixelIcons.palette,
-                            size: 48,
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            _formatRewardChip(
-                              estimate?.estimatedRewardMinimalUnits,
-                            ),
-                            style: PixelTheme.label.copyWith(
-                              color: PixelTheme.gold,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                // Chip full-width da coluna de poder (sem truncar).
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: PixelTheme.purpleDark,
-                    border: Border.all(color: PixelTheme.purple, width: 2),
-                    borderRadius: BorderRadius.circular(4),
-                  ),
+                const SizedBox(width: 8),
+                Flexible(
                   child: FittedBox(
                     fit: BoxFit.scaleDown,
                     child: Text(
-                      'PODER DE MINERAÇÃO TOTAL',
-                      style: const TextStyle(
-                        color: PixelTheme.purple,
-                        fontSize: 10,
-                        letterSpacing: 0.5,
-                        fontWeight: FontWeight.w700,
-                      ),
+                      'SEU PODER DE MINERAÇÃO',
+                      style: PixelTheme.title,
+                      maxLines: 1,
                     ),
                   ),
+                ),
+                const SizedBox(width: 8),
+                PixelIcon(
+                  matrix: PixelIcons.pickaxe,
+                  palette: PixelIcons.palette,
+                  size: 20,
                 ),
               ],
             ),
           ),
-          // Linha do countdown abaixo do card de poder (mesma widget da antiga).
-          // Envolta em FittedBox para escalar em telas estreitas (320dp) sem
-          // cortar o rótulo/tempo.
-          Padding(
-            padding: const EdgeInsets.only(top: 10, left: 4, right: 4),
-            child: FittedBox(
-              fit: BoxFit.scaleDown,
-              alignment: Alignment.centerLeft,
-              child: NextBlockCountdown(
-                block: _block,
-                label: 'Próxima recompensa em',
-                fontSize: 12,
-                centered: false,
-              ),
-            ),
-          ),
           const SizedBox(height: 12),
-          const SectionTitle(text: 'GANHE COIN'),
-          const SizedBox(height: 8),
           Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               Expanded(
-                child: GestureDetector(
-                  onTap: () {}, // Navigate to /missions
-                  child: PixelCard(
-                    borderColor: PixelTheme.cyan,
-                    child: Column(
+                child: Column(
+                  children: [
+                    Text('PODER ATUAL', style: PixelTheme.label),
+                    const SizedBox(height: 8),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         PixelIcon(
-                          matrix: PixelIcons.clipboard,
+                          matrix: PixelIcons.pickaxe,
                           palette: PixelIcons.palette,
-                          size: 56,
+                          size: 40,
                         ),
-                        const SizedBox(height: 8),
-                        Text('FAÇA TAREFAS', style: textCianoBold),
-                        const SizedBox(height: 4),
-                        Text(
-                          'Complete tarefas e ganhe coins!',
-                          style: PixelTheme.label,
+                        const SizedBox(width: 4),
+                        Flexible(
+                          child: Column(
+                            children: [
+                              FittedBox(
+                                fit: BoxFit.scaleDown,
+                                child: Text(
+                                  _formatPowerText(totalPower),
+                                  style: PixelTheme.bigValue,
+                                  maxLines: 1,
+                                ),
+                              ),
+                              Text(
+                                _formatPowerUnit(totalPower),
+                                style: labelPurple,
+                                maxLines: 1,
+                              ),
+                            ],
+                          ),
                         ),
                       ],
                     ),
-                  ),
+                  ],
                 ),
               ),
-              const SizedBox(width: 8),
+              Container(width: 1, color: PixelTheme.border),
               Expanded(
-                child: GestureDetector(
-                  onTap: widget.onPlayGames,
-                  child: PixelCard(
-                    borderColor: PixelTheme.green,
-                    child: Column(
-                      children: [
-                        PixelIcon(
-                          matrix: PixelIcons.gamepad,
-                          palette: PixelIcons.palette,
-                          size: 56,
-                        ),
-                        const SizedBox(height: 8),
-                        Text('JOGUE MINIGAMES', style: textVerdeBold),
-                        const SizedBox(height: 4),
-                        Text(
-                          'Divirta-se e ganhe coins jogando!',
-                          style: PixelTheme.label,
-                        ),
-                      ],
+                child: Column(
+                  children: [
+                    Text(
+                      'RECOMPENSA A CADA 5 MINUTOS',
+                      style: PixelTheme.label,
                     ),
-                  ),
+                    const SizedBox(height: 8),
+                    PixelIcon(
+                      matrix: PixelIcons.coin,
+                      palette: PixelIcons.palette,
+                      size: 48,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      _formatRewardChip(
+                        estimate?.estimatedRewardMinimalUnits,
+                      ),
+                      style: PixelTheme.label.copyWith(
+                        color: PixelTheme.gold,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ],
           ),
           const SizedBox(height: 12),
-          GestureDetector(
-            onTap: () => _bonus(context),
-            child: PixelCard(
-              borderColor: PixelTheme.purple,
-              child: Row(
-                children: [
-                  PixelIcon(
-                    matrix: PixelIcons.gift,
-                    palette: PixelIcons.palette,
-                    size: 40,
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('BÔNUS DIÁRIO', style: textRoxoBold),
-                        const SizedBox(height: 4),
-                        Text(
-                          'Resgate seu bônus diário e ganhe mais coins!',
-                          style: PixelTheme.label,
-                        ),
-                      ],
-                    ),
-                  ),
-                  Text('>', style: textDouradoBold20),
-                ],
+          // Chip full-width da coluna de poder (sem truncar).
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: PixelTheme.purpleDark,
+              border: Border.all(color: PixelTheme.purple, width: 2),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                'PODER DE MINERAÇÃO TOTAL',
+                style: const TextStyle(
+                  color: PixelTheme.purple,
+                  fontSize: 10,
+                  letterSpacing: 0.5,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ),
           ),
         ],
       ),
+    );
+
+    // Linha do countdown
+    final Widget countdownLine = Padding(
+      padding: const EdgeInsets.only(top: 10, left: 4, right: 4),
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        alignment: Alignment.centerLeft,
+        child: NextBlockCountdown(
+          block: _block,
+          label: 'Próxima recompensa em',
+          fontSize: 12,
+          centered: false,
+        ),
+      ),
+    );
+
+    // Row GANHE COIN: FAÇA TAREFAS + JOGUE MINIGAMES
+    final Widget earnRow = Row(
+      children: [
+        Expanded(
+          child: GestureDetector(
+            onTap: () {}, // Navigate to /missions
+            child: PixelCard(
+              borderColor: PixelTheme.cyan,
+              child: Column(
+                children: [
+                  PixelIcon(
+                    matrix: PixelIcons.clipboard,
+                    palette: PixelIcons.palette,
+                    size: 56,
+                  ),
+                  const SizedBox(height: 8),
+                  Text('FAÇA TAREFAS', style: textCianoBold),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Complete tarefas e ganhe coins!',
+                    style: PixelTheme.label,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: GestureDetector(
+            onTap: widget.onPlayGames,
+            child: PixelCard(
+              borderColor: PixelTheme.green,
+              child: Column(
+                children: [
+                  PixelIcon(
+                    matrix: PixelIcons.gamepad,
+                    palette: PixelIcons.palette,
+                    size: 56,
+                  ),
+                  const SizedBox(height: 8),
+                  Text('JOGUE MINIGAMES', style: textVerdeBold),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Divirta-se e ganhe coins jogando!',
+                    style: PixelTheme.label,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+
+    // Card BÔNUS DIÁRIO (fixo embaixo)
+    final Widget bonusCard = GestureDetector(
+      onTap: () => _bonus(context),
+      child: PixelCard(
+        borderColor: PixelTheme.purple,
+        child: Row(
+          children: [
+            PixelIcon(
+              matrix: PixelIcons.gift,
+              palette: PixelIcons.palette,
+              size: 40,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('BÔNUS DIÁRIO', style: textRoxoBold),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Resgate seu bônus diário e ganhe mais coins!',
+                    style: PixelTheme.label,
+                  ),
+                ],
+              ),
+            ),
+            Text('>', style: textDouradoBold20),
+          ],
+        ),
+      ),
+    );
+
+    // --- ESTRUTURA FINAL ---
+    return Column(
+      children: [
+        Expanded(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+            child: Column(
+              children: [
+                powerCard,
+                const SizedBox(height: 12),
+                countdownLine,
+                const SizedBox(height: 12),
+                const SectionTitle(text: 'GANHE COIN'),
+                const SizedBox(height: 8),
+                earnRow,
+              ],
+            ),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+          child: bonusCard,
+        ),
+      ],
     );
   }
 
