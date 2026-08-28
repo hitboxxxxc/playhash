@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 import '../../core/providers.dart';
 import '../../core/theme/pixel_theme.dart';
@@ -64,18 +66,161 @@ class _PixelHomeScreenState extends ConsumerState<PixelHomeScreen> {
   BlockSnapshot? _block;
 
   StreamSubscription<BlockSnapshot?>? _blockSub;
+ bool _idleDialogShown = false;
 
-  @override
-  void initState() {
-    super.initState();
-    _subscribeBlock();
-  }
+ @override
+ void initState() {
+   super.initState();
+   _subscribeBlock();
+   _checkIdleRewards();
+ }
 
-  @override
-  void dispose() {
-    _blockSub?.cancel();
-    super.dispose();
-  }
+ @override
+ void dispose() {
+   _blockSub?.cancel();
+   super.dispose();
+ }
+
+ /// Verifica recompensas ociosas ("enquanto você esteve fora") na inicialização.
+ /// 1. Lê users/{uid}.lastLoginAt (prev) ANTES de qualquer update.
+ /// 2. Lê rewards/{uid}/items limit 200 (sem orderBy), soma amount dos createdAt em (prev, agora].
+ /// 3. Se soma > 0 → Dialog pixel.
+ /// 4. Depois: users/{uid}.update({'lastLoginAt': Timestamp.now()}).
+ Future<void> _checkIdleRewards() async {
+   try {
+     final String? uid = FirebaseAuth.instance.currentUser?.uid;
+     if (uid == null || _idleDialogShown) return;
+     _idleDialogShown = true;
+
+     final db = FirebaseFirestore.instance;
+     final userRef = db.doc('users/$uid');
+
+     // 1. Ler lastLoginAt anterior
+     final userSnap = await userRef.get();
+     final prevLogin = userSnap.get('lastLoginAt') as Timestamp?;
+     if (prevLogin == null) {
+       // Primeiro login, apenas atualiza lastLoginAt
+       await userRef.update({'lastLoginAt': FieldValue.serverTimestamp()});
+       return;
+     }
+     final prevLoginMs = prevLogin.toDate().millisecondsSinceEpoch;
+     final nowMs = DateTime.now().millisecondsSinceEpoch;
+
+     // 2. Ler rewards/{uid}/items (limit 200, sem orderBy)
+     final rewardsSnap = await db
+         .collection('rewards/$uid/items')
+         .limit(200)
+         .get();
+
+     BigInt totalCoins = BigInt.zero;
+     for (final doc in rewardsSnap.docs) {
+       final data = doc.data();
+       final createdAt = data['createdAt'] as Timestamp?;
+       final amountStr = data['amount'] as String?;
+       final type = data['type'] as String?;
+       final currencyId = data['currencyId'] as String?;
+
+       if (createdAt == null || amountStr == null) continue;
+       if (type != 'REWARD_BLOCK') continue; // apenas blocos de mineração
+       if (currencyId != 'coins') continue;
+
+       final createdMs = createdAt.toDate().millisecondsSinceEpoch;
+       if (createdMs > prevLoginMs && createdMs <= nowMs) {
+         totalCoins += BigInt.tryParse(amountStr) ?? BigInt.zero;
+       }
+     }
+
+     // 3. Se soma > 0 → Dialog pixel
+     if (totalCoins > BigInt.zero && mounted) {
+       // Converter para string formatada pt-BR
+       final scale = BigInt.from(1000000);
+       final whole = totalCoins ~/ scale;
+       final frac = (totalCoins % scale).abs();
+       final wholeStr = _groupThousands(whole.toString());
+       final fracStr = frac.toString().padLeft(6, '0').substring(0, 2);
+       final formatted = '$wholeStr,$fracStr COIN';
+
+       _showIdleDialog(formatted);
+     }
+
+     // 4. Atualizar lastLoginAt
+     await userRef.update({'lastLoginAt': FieldValue.serverTimestamp()});
+   } catch (e) {
+     // Falha silenciosa - não quebra a tela (ex.: testes sem Firebase mockado)
+     debugPrint('Idle rewards check failed: $e');
+   }
+ }
+
+ void _showIdleDialog(String formattedCoins) {
+   if (!mounted) return;
+   showDialog<void>(
+     context: context,
+     barrierDismissible: false,
+     builder: (BuildContext context) => AlertDialog(
+       backgroundColor: PixelTheme.background,
+       shape: RoundedRectangleBorder(
+         borderRadius: BorderRadius.circular(8),
+         side: const BorderSide(color: PixelTheme.gold, width: 2),
+       ),
+       title: Row(
+         mainAxisAlignment: MainAxisAlignment.center,
+         children: [
+           PixelIcon(
+             matrix: PixelIcons.coin,
+             palette: PixelIcons.palette,
+             size: 24,
+           ),
+           const SizedBox(width: 8),
+           const Text(
+             'ENQUANTO VOCÊ ESTEVE FORA',
+             style: TextStyle(
+               color: PixelTheme.gold,
+               fontSize: 14,
+               fontWeight: FontWeight.bold,
+               letterSpacing: 1,
+             ),
+           ),
+         ],
+       ),
+       content: Column(
+         mainAxisSize: MainAxisSize.min,
+         children: [
+           Text(
+             'Suas máquinas e poder geraram',
+             style: PixelTheme.label,
+             textAlign: TextAlign.center,
+           ),
+           const SizedBox(height: 8),
+           Text(
+             '+$formattedCoins',
+             style: const TextStyle(
+               color: PixelTheme.gold,
+               fontSize: 24,
+               fontWeight: FontWeight.bold,
+               letterSpacing: 2,
+             ),
+           ),
+         ],
+       ),
+       actions: [
+         Center(
+           child: TextButton(
+             onPressed: () => Navigator.of(context).pop(),
+             child: const Text(
+               'ENTENDI',
+               style: TextStyle(
+                 color: PixelTheme.cyan,
+                 fontSize: 14,
+                 fontWeight: FontWeight.bold,
+                 letterSpacing: 1,
+               ),
+             ),
+           ),
+         ),
+       ],
+     ),
+   );
+ }
 
   /// Stream do bloco em tempo real (mesma fonte da home/mineração antiga).
   /// Falha => null (estado vazio — nunca quebra a tela).

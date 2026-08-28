@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/providers.dart';
+import '../../../core/services/game_grant_service.dart';
 import '../../../core/services/game_session_service.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/widgets/neon_button.dart';
@@ -204,54 +205,66 @@ class _NeonHopperScreenState extends ConsumerState<NeonHopperScreen>
     _ticker.stop();
     _input.release();
     if (!mounted) return;
-    // NÃO envia automaticamente — o painel final mostra "COLETAR RECOMPENSA"
-    // (finishSession com breakdown; retry idempotente).
-    setState(() {
-      _stage = _ScreenStage.finished;
-      _resultStage = HopperResultStage.idle;
-    });
-  }
 
-  Future<void> _sendScore(NeonHopperState s) async {
-    final String? sessionId = _sessionId;
-    if (sessionId == null || _finishing) return;
-    _finishing = true;
-    setState(() => _resultStage = HopperResultStage.sending);
+    // Calcular o poder usando a mesma fórmula do runner (linear_cap)
+    final GameConfig cfg = widget.game.configuration;
+    int grantedPower = 0;
     try {
-      await ref.read(gameSessionServiceProvider).finishSession(
-            sessionId: sessionId,
-            score: s.score,
-            breakdown: s.breakdown(), // {stomps, coins, flagReached} EXATOS
-          );
-      if (!mounted) return;
-      setState(() => _resultStage = HopperResultStage.validating);
-      _listenServerResult(sessionId);
-    } on GameSessionException {
-      if (!mounted) return;
-      setState(() => _resultStage = HopperResultStage.sendFailed);
-    } finally {
-      _finishing = false;
+      if (cfg.powerFormula == 'linear_cap' && cfg.powerCapPerSessionBaseUnits > 0) {
+        final ratio = (s.score / cfg.maxExpectedScore).clamp(0.0, 1.0);
+        grantedPower = (ratio * cfg.powerCapPerSessionBaseUnits).floor();
+      } else {
+        // Legado
+        final powerBaseReward = cfg.pointsPerStomp > 0 ? 100 : 0;
+        final rawPower = ((s.score * powerBaseReward) / cfg.maxExpectedScore).floor();
+        grantedPower = rawPower.clamp(0, cfg.powerCapPerSessionBaseUnits);
+      }
+    } catch (_) {
+      grantedPower = 0;
     }
-  }
 
-  void _listenServerResult(String sessionId) {
-    final Stream<GameSessionServerResult> stream =
-        ref.read(gameSessionServiceProvider).watchResult(sessionId);
-    stream.listen(
-      (GameSessionServerResult r) {
-        if (!mounted || !r.processed) return;
-        setState(() {
-          _serverResult = r;
-          _resultStage = r.status == 'rejected'
-              ? HopperResultStage.rejected
-              : HopperResultStage.granted;
-        });
-      },
-      onError: (Object _) {
-        // Stream falhou (offline): permanece "em validação"; o runner
-        // processa quando possível.
-      },
-    );
+    // Chamar GameGrantService.finishSession imediatamente
+    int finalGrantedPower = 0;
+    try {
+      finalGrantedPower = await GameGrantService.finishSession(
+        gameId: widget.game.id,
+        gameDocPath: 'games/${widget.game.id}',
+        score: s.score,
+        breakdown: s.breakdown(), // {stomps, coins, flagReached} EXATOS
+        durationMs: (cfg.durationSeconds * 1000).toInt(),
+        grantedPower: grantedPower,
+      );
+      setState(() {
+        _stage = _ScreenStage.finished;
+        _resultStage = HopperResultStage.granted;
+        _serverResult = GameSessionServerResult(
+          processed: true,
+          status: 'granted',
+          powerAmountHs: finalGrantedPower ~/ 1000,
+          expiresAt: DateTime.now().add(const Duration(hours: 24)),
+        );
+      });
+    } on GrantException catch (e) {
+      setState(() {
+        _stage = _ScreenStage.finished;
+        _resultStage = HopperResultStage.rejected;
+        _serverResult = GameSessionServerResult(
+          processed: true,
+          status: 'rejected',
+          reason: e.code,
+        );
+      });
+    } catch (e) {
+      setState(() {
+        _stage = _ScreenStage.finished;
+        _resultStage = HopperResultStage.rejected;
+        _serverResult = GameSessionServerResult(
+          processed: true,
+          status: 'rejected',
+          reason: 'ERROR',
+        );
+      });
+    }
   }
 
   void _pause() {
@@ -270,15 +283,14 @@ class _NeonHopperScreenState extends ConsumerState<NeonHopperScreen>
     _game!.value = s.copyWith(phase: HopperPhase.playing);
   }
 
-  /// Saída no meio da partida: envia o score parcial com breakdown para não
-  /// deixar sessões órfãs; muito curta ⇒ backend rejeita com segurança.
+  /// Saída no meio da partida: chama _onGameEnd para conceder poder imediatamente.
   Future<void> _finishAndPop() async {
     final NeonHopperState? s = _game?.value;
     final NavigatorState nav = Navigator.of(context);
     if (_stage == _ScreenStage.playing && s != null && !_finishing) {
       _ticker.stop();
       _stage = _ScreenStage.finished;
-      await _sendScore(s);
+      await _onGameEnd(s);
     }
     nav.pop();
   }
@@ -395,10 +407,7 @@ class _NeonHopperScreenState extends ConsumerState<NeonHopperScreen>
                     null => null,
                   },
                   serverResult: _serverResult,
-                  onCollect: (_resultStage == HopperResultStage.idle ||
-                          _resultStage == HopperResultStage.sendFailed)
-                      ? () => _sendScore(s)
-                      : null,
+                  onCollect: null, // Concessão é imediata, não há botão COLETAR
                   onBack: () => Navigator.of(context).pop(),
                 ),
             ],

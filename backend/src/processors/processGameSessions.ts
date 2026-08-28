@@ -247,6 +247,7 @@ async function handleSession(
   const data = sessionSnap.data();
   const uid = typeof data.uid === 'string' ? data.uid : null;
   const ruleVersion = economy.economicRuleVersion;
+  const deviceGranted = data.deviceGranted === true;
 
   try {
     const game = await loadGame(db, data.gameId);
@@ -286,6 +287,131 @@ async function handleSession(
       return 'rejected';
     }
 
+    // MODO AUDITOR: se deviceGranted == true, NÃO concede poder; apenas valida
+    if (deviceGranted) {
+      const clientGrantedPower = typeof data.grantedPower === 'number' ? data.grantedPower : 0;
+      const perGameCap = game?.configuration?.powerCapPerSessionBaseUnits ?? 0;
+      const globalCap = economy.maxGamePowerPerSession ?? 0;
+      const allowedCap = Math.min(perGameCap > 0 ? perGameCap : Infinity, globalCap > 0 ? globalCap : Infinity);
+
+      // Validar se o poder concedido pelo cliente está dentro dos caps
+      const powerOk = clientGrantedPower <= allowedCap;
+
+      // Validar duração (dentro dos limites do game/economy)
+      const durationMs = toMillisSafe(data.finishedAt) - toMillisSafe(data.startedAt);
+      const cfg = game?.configuration;
+      const minDurationMs = (cfg?.minDurationSeconds ?? 0) > 0
+        ? (cfg!.minDurationSeconds * 1000)
+        : economy.limits.minSessionDurationMs;
+      const maxDurationMs = (cfg?.durationSeconds ?? 0) > 0
+        ? ((cfg!.durationSeconds + 3) * 1000)
+        : economy.limits.maxSessionDurationMs;
+      const durationOk = durationMs >= minDurationMs && durationMs <= maxDurationMs;
+
+      // Validar score rate
+      const durationSec = durationMs / 1000;
+      const rateCap = (cfg?.maxScorePerSecond ?? 0) > 0
+        ? cfg!.maxScorePerSecond
+        : economy.limits.maxScorePerSecond;
+      const scoreOk = data.score / durationSec <= rateCap;
+
+      // Validar score cap
+      const scoreCap = (cfg?.maxScore ?? 0) > 0
+        ? cfg!.maxScore
+        : (cfg?.maxExpectedScore ?? 0);
+      const scoreCapOk = data.score <= scoreCap;
+
+      // Se tudo OK, apenas marca como processed (auditoria passou)
+      if (powerOk && durationOk && scoreOk && scoreCapOk) {
+        await sessionSnap.ref.update({
+          processed: true,
+          serverResult: {
+            status: 'already_granted',
+            powerAmount: clientGrantedPower.toString(),
+            totalPower: '0', // não recalculamos, cliente já concedeu
+            expiresAt: new Date(nowMs + economy.limits.tempGrantDurationMs),
+            at: FieldValue.serverTimestamp(),
+          },
+        });
+
+        await writeAudit(db, {
+          eventId: auditEventId('GAME_SESSION_AUDITED', sessionId),
+          userId: uid,
+          type: 'GAME_SESSION_AUDITED',
+          valueUnits: BigInt(clientGrantedPower),
+          currencyId: 'power',
+          referenceId: sessionId,
+          origin: 'runner.processGameSessions',
+          ruleVersion,
+          status: 'SUCCESS',
+          detail: {
+            gameId: typeof data.gameId === 'string' ? data.gameId : '',
+            audited: true,
+            powerOk,
+            durationOk,
+            scoreOk,
+            scoreCapOk,
+          },
+        });
+
+        // Incrementar contador de sessões para rate limiting
+        await incrementDailyCounter(db, uid!, 'sessions', nowMs);
+
+        return 'granted';
+      }
+
+      // VIOLAÇÃO: estornar temporaryPower (admin), marcar session.flagged e auditoria
+      // Buscar o poder atual do usuário
+      const powerSnap = await db.doc(`power/${uid}`).get();
+      const powerData = powerSnap.data() ?? {};
+      const currentTempPower = typeof powerData.temporaryPower === 'number' ? powerData.temporaryPower : 0;
+
+      // Estornar o poder concedido indevidamente
+      await db.doc(`power/${uid}`).update({
+        temporaryPower: Math.max(0, currentTempPower - clientGrantedPower),
+        totalPower: FieldValue.increment(-clientGrantedPower),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+
+      await sessionSnap.ref.update({
+        processed: true,
+        flagged: true,
+        serverResult: {
+          status: 'rejected',
+          reason: 'AUDIT_FAILED',
+          at: FieldValue.serverTimestamp(),
+        },
+      });
+
+      await writeAudit(db, {
+        eventId: auditEventId('GAME_POWER_REVERSED', sessionId),
+        userId: uid,
+        type: 'GAME_POWER_REVERSED',
+        valueUnits: BigInt(clientGrantedPower),
+        currencyId: 'power',
+        referenceId: sessionId,
+        origin: 'runner.processGameSessions',
+        ruleVersion,
+        status: 'REVERSED',
+        detail: {
+          gameId: typeof data.gameId === 'string' ? data.gameId : '',
+          reason: !powerOk ? 'POWER_EXCEEDS_CAP' : !durationOk ? 'DURATION_INVALID' : !scoreOk ? 'SCORE_RATE_EXCEEDED' : 'SCORE_CAP_EXCEEDED',
+          clientGrantedPower,
+          allowedCap,
+          durationMs,
+          minDurationMs,
+          maxDurationMs,
+          scoreRate: data.score / durationSec,
+          rateCap,
+          score: data.score,
+          scoreCap,
+        },
+      });
+
+      return 'rejected';
+    }
+
+    // FLUXO ANTIGO: sessions sem deviceGranted (compatibilidade)
     // Grant 24h — doc id determinístico (= sessionId) ⇒ idempotente.
     const created = await createTempGrant(db, {
       grantId: sessionId,

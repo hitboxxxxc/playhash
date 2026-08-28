@@ -162,8 +162,8 @@ class FirebaseAuthService implements AuthServiceApi {
         if (termsAcceptedAt != null)
           'termsAcceptedAt': Timestamp.fromDate(termsAcceptedAt.toUtc()),
       });
-    } else {
-      await _touchLastLogin(user);
     }
+    // NÃO atualiza lastLoginAt aqui — o pixel_home_screen faz isso
+    // uma única vez no boot após verificar recompensas "enquanto fora".
   }
 }

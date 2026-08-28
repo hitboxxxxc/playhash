@@ -346,3 +346,7 @@ Compras e upgrades de máquinas são processados IMEDIATAMENTE no cliente via tr
 Firestore; valida-se apenas o saldo real (wallets/{uid}) e os valores ancorados no
 catálogo config/machines pelas rules. Exceção deliberada à autoridade do runner (doc 05
 §15) por decisão do dono. Runner mantém blocos/sessões/missões.
+
+## PODER DE GAME IMEDIATO NO APARELHO (DECISÃO DO DONO 14.9)
+
+Concessão de poder dos games é imediata no cliente via transação Firestore, ancorada nas rules (teto por sessão, lastGrantAt recente, totalPower=perm+temp); gameSessions fica gravada e o runner passa a ser AUDITOR (valida caps, estorna/flagra abuso, não concede duas vezes). Blocos continuam no runner e já accrual com app fechado.

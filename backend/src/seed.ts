@@ -23,6 +23,8 @@ const ECONOMY = {
   powerBasePerHs: 1_000,
   residueUnits: 0,
   economicRuleVersion: 2,
+  maxGamePowerPerSession: 200000,
+  maxGameSessionsPerDay: 30,
   limits: {
     maxSessionsPerDay: 50,
     maxPurchaseIntentsPerDay: 20,

@@ -42,6 +42,10 @@ export interface EconomyConfig {
   residueUnits: bigint;
   /** Versão da regra econômica — propagada para grants/auditoria/transações. */
   economicRuleVersion: number;
+  /** Teto máximo de poder concedido por sessão de jogo (units). */
+  maxGamePowerPerSession: number;
+  /** Máximo de sessões de jogo por dia (por usuário). */
+  maxGameSessionsPerDay: number;
   limits: EconomyLimits;
 }
 
@@ -131,8 +135,6 @@ export interface PowerSnapshot {
   totalPower: bigint;
 }
 
-export type AuditStatus = 'SUCCESS' | 'REJECTED' | 'FAILED';
-
 export interface AuditEntry {
   /** Determinístico: `${type}:${referenceId}` ⇒ append-only idempotente. */
   eventId: string;
@@ -151,6 +153,8 @@ export type AuditEventType =
   | 'GAME_POWER_GRANTED'
   | 'GAME_POWER_EXPIRED'
   | 'GAME_SESSION_REJECTED'
+  | 'GAME_SESSION_AUDITED'
+  | 'GAME_POWER_REVERSED'
   | 'MACHINE_PURCHASED'
   | 'PURCHASE_FAILED'
   | 'BLOCK_CREATED'
@@ -178,6 +182,8 @@ export type AuditEventType =
   | 'ACCOUNT_ECONOMIC_LOCK'
   | 'MACHINE_UPGRADED'
   | 'MACHINE_UPGRADE_FAILED';
+
+export type AuditStatus = 'SUCCESS' | 'REJECTED' | 'FAILED' | 'REVERSED';
 
 export interface ProcessingSummary {
   scanned: number;

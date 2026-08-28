@@ -60,6 +60,8 @@ export async function getEconomyConfig(db: Firestore): Promise<EconomyConfig> {
     powerBasePerHs: num(data.powerBasePerHs, 1_000, 1, 'powerBasePerHs'),
     residueUnits: toInt((data.residueUnits ?? 0) as number | string),
     economicRuleVersion: num(data.economicRuleVersion, 1, 1, 'economicRuleVersion'),
+    maxGamePowerPerSession: num(data.maxGamePowerPerSession, 200000, 0, 'maxGamePowerPerSession'),
+    maxGameSessionsPerDay: num(data.maxGameSessionsPerDay, 30, 0, 'maxGameSessionsPerDay'),
     limits: parseLimits(data.limits),
   };
 

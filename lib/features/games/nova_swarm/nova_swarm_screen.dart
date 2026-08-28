@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/providers.dart';
+import '../../../core/services/game_grant_service.dart';
 import '../../../core/services/game_session_service.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/widgets/neon_button.dart';
@@ -212,53 +213,70 @@ class _NovaSwarmScreenState extends ConsumerState<NovaSwarmScreen>
     _ticker.stop();
     _input.release(); // autofire nunca sobrevive ao fim da partida
     if (!mounted) return;
-    // v2: NÃO envia automaticamente — o painel final mostra
-    // "COLETAR RECOMPENSA", que garante o finishSession (retry idempotente).
-    setState(() {
-      _stage = _ScreenStage.finished;
-      _resultStage = ResultStage.idle;
-    });
-  }
 
-  Future<void> _sendScore(int score, {int? kills}) async {
-    final String? sessionId = _sessionId;
-    if (sessionId == null || _finishing) return;
-    _finishing = true;
-    setState(() => _resultStage = ResultStage.sending);
+    // Calcular o poder usando a mesma fórmula do runner (linear_cap)
+    final GameConfig cfg = widget.game.configuration;
+    int grantedPower = 0;
     try {
-      await ref
-          .read(gameSessionServiceProvider)
-          .finishSession(sessionId: sessionId, score: score, kills: kills);
-      if (!mounted) return;
-      setState(() => _resultStage = ResultStage.validating);
-      _listenServerResult(sessionId);
-    } on GameSessionException {
-      if (!mounted) return;
-      setState(() => _resultStage = ResultStage.sendFailed);
-    } finally {
-      _finishing = false;
+      if (cfg.powerFormula == 'linear_cap' && cfg.powerCapPerSessionBaseUnits > 0) {
+        final ratio = (s.score / cfg.maxExpectedScore).clamp(0.0, 1.0);
+        grantedPower = (ratio * cfg.powerCapPerSessionBaseUnits).floor();
+      } else {
+        // Legado: rawPower = floor(score × powerBaseReward / maxExpectedScore)
+        final powerBaseReward = cfg.pointsPerKill > 0 ? 250 : 0;
+        final rawPower = ((s.score * powerBaseReward) / cfg.maxExpectedScore).floor();
+        grantedPower = rawPower.clamp(0, cfg.powerCapPerSessionBaseUnits);
+      }
+    } catch (_) {
+      grantedPower = 0;
+    }
+
+    // Chamar GameGrantService.finishSession imediatamente
+    int finalGrantedPower = 0;
+    try {
+      finalGrantedPower = await GameGrantService.finishSession(
+        gameId: widget.game.id,
+        gameDocPath: 'games/${widget.game.id}',
+        score: s.score,
+        breakdown: const {}, // Nova Swarm não usa breakdown
+        durationMs: (cfg.durationSeconds * 1000).toInt(),
+        grantedPower: grantedPower,
+      );
+      setState(() {
+        _stage = _ScreenStage.finished;
+        _resultStage = ResultStage.granted;
+        _serverResult = GameSessionServerResult(
+          processed: true,
+          status: 'granted',
+          powerAmountHs: finalGrantedPower ~/ 1000,
+          expiresAt: DateTime.now().add(const Duration(hours: 24)),
+        );
+      });
+    } on GrantException catch (e) {
+      setState(() {
+        _stage = _ScreenStage.finished;
+        _resultStage = ResultStage.rejected;
+        _serverResult = GameSessionServerResult(
+          processed: true,
+          status: 'rejected',
+          reason: e.code,
+        );
+      });
+    } catch (e) {
+      setState(() {
+        _stage = _ScreenStage.finished;
+        _resultStage = ResultStage.rejected;
+        _serverResult = GameSessionServerResult(
+          processed: true,
+          status: 'rejected',
+          reason: 'ERROR',
+        );
+      });
     }
   }
 
-  void _listenServerResult(String sessionId) {
-    final Stream<GameSessionServerResult> stream =
-        ref.read(gameSessionServiceProvider).watchResult(sessionId);
-    stream.listen(
-      (GameSessionServerResult r) {
-        if (!mounted || !r.processed) return;
-        setState(() {
-          _serverResult = r;
-          _resultStage = r.status == 'rejected'
-              ? ResultStage.rejected
-              : ResultStage.granted;
-        });
-      },
-      onError: (Object _) {
-        // Stream falhou (offline): permanece "em validação"; o runner
-        // processa quando possível e o histórico do catálogo reflete depois.
-      },
-    );
-  }
+  // _sendScore e _listenServerResult não são mais necessários
+  // pois a concessão é imediata via GameGrantService.finishSession em _onGameEnd
 
   void _pause() {
     final NovaSwarmState? s = _game?.value;
@@ -287,7 +305,7 @@ class _NovaSwarmScreenState extends ConsumerState<NovaSwarmScreen>
     if (_stage == _ScreenStage.playing && s != null && !_finishing) {
       _ticker.stop();
       _stage = _ScreenStage.finished;
-      await _sendScore(s.score);
+      await _onGameEnd(s);
     }
     nav.pop();
   }
@@ -432,11 +450,7 @@ class _NovaSwarmScreenState extends ConsumerState<NovaSwarmScreen>
                   },
                   powerUpsCollected: s.totalPowerUpsCollected,
                   serverResult: _serverResult,
-                  onCollect:
-                      (_resultStage == ResultStage.idle ||
-                              _resultStage == ResultStage.sendFailed)
-                          ? () => _sendScore(s.score, kills: s.kills)
-                          : null,
+                  onCollect: null, // Concessão é imediata, não há botão COLETAR
                   onBack: () => Navigator.of(context).pop(),
                 ),
             ],
