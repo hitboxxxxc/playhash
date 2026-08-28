@@ -13,6 +13,7 @@ import '../../core/widgets/pixel_card.dart';
 import '../../core/widgets/pixel_icon.dart';
 import '../../core/widgets/pixel_icons.dart';
 import '../../core/widgets/section_title.dart';
+import '../../core/widgets/pixel_button.dart';
 import '../../data/models/power_model.dart';
 import '../../data/repositories/mining_repository.dart';
 
@@ -140,7 +141,10 @@ class _PixelHomeScreenState extends ConsumerState<PixelHomeScreen> {
        final fracStr = frac.toString().padLeft(6, '0').substring(0, 2);
        final formatted = '$wholeStr,$fracStr COIN';
 
-       _showIdleDialog(formatted);
+       // Get current balance for dialog
+       final walletAsync = ref.watch(walletStreamProvider);
+       final currentBalance = walletAsync.value?.availableBalance;
+       _showIdleDialog(formatted, currentBalance);
      }
 
      // 4. Atualizar lastLoginAt
@@ -151,73 +155,105 @@ class _PixelHomeScreenState extends ConsumerState<PixelHomeScreen> {
    }
  }
 
- void _showIdleDialog(String formattedCoins) {
+ /// Formata BigInt (unidades mínimas 1e6) para string pt-BR "1.234,56 COIN"
+ String _formatBalance(BigInt? balance) {
+   if (balance == null || balance == BigInt.zero) return '0,00 COIN';
+   final BigInt scale = BigInt.from(1000000);
+   final BigInt whole = balance ~/ scale;
+   final BigInt frac = (balance % scale).abs();
+   final String wholeStr = _groupThousands(whole.toString());
+   final String fracStr = frac.toString().padLeft(6, '0').substring(0, 2);
+   return '$wholeStr,$fracStr COIN';
+ }
+
+ void _showIdleDialog(String formattedCoins, BigInt? currentBalance) {
    if (!mounted) return;
    showDialog<void>(
      context: context,
      barrierDismissible: false,
-     builder: (BuildContext context) => AlertDialog(
-       backgroundColor: PixelTheme.background,
-       shape: RoundedRectangleBorder(
-         borderRadius: BorderRadius.circular(8),
-         side: const BorderSide(color: PixelTheme.gold, width: 2),
-       ),
-       title: Row(
-         mainAxisAlignment: MainAxisAlignment.center,
-         children: [
-           PixelIcon(
-             matrix: PixelIcons.coin,
-             palette: PixelIcons.palette,
-             size: 24,
-           ),
-           const SizedBox(width: 8),
-           const Text(
-             'ENQUANTO VOCÊ ESTEVE FORA',
-             style: TextStyle(
-               color: PixelTheme.gold,
-               fontSize: 14,
-               fontWeight: FontWeight.bold,
-               letterSpacing: 1,
-             ),
-           ),
-         ],
-       ),
-       content: Column(
-         mainAxisSize: MainAxisSize.min,
-         children: [
-           Text(
-             'Suas máquinas e poder geraram',
-             style: PixelTheme.label,
-             textAlign: TextAlign.center,
-           ),
-           const SizedBox(height: 8),
-           Text(
-             '+$formattedCoins',
-             style: const TextStyle(
-               color: PixelTheme.gold,
-               fontSize: 24,
-               fontWeight: FontWeight.bold,
-               letterSpacing: 2,
-             ),
-           ),
-         ],
-       ),
-       actions: [
-         Center(
-           child: TextButton(
-             onPressed: () => Navigator.of(context).pop(),
-             child: const Text(
-               'ENTENDI',
-               style: TextStyle(
-                 color: PixelTheme.cyan,
-                 fontSize: 14,
-                 fontWeight: FontWeight.bold,
-                 letterSpacing: 1,
+     builder: (BuildContext context) => Dialog(
+       backgroundColor: PixelTheme.panel,
+       child: Container(
+         decoration: BoxDecoration(
+           color: PixelTheme.panel,
+           border: Border.all(color: PixelTheme.gold, width: 2),
+           borderRadius: BorderRadius.circular(8),
+         ),
+         padding: const EdgeInsets.all(16),
+         child: Column(
+           mainAxisSize: MainAxisSize.min,
+           children: [
+             SizedBox(
+               width: double.infinity,
+               child: FittedBox(
+                 fit: BoxFit.scaleDown,
+                 child: Row(
+                   mainAxisSize: MainAxisSize.min,
+                   children: [
+                     PixelIcon(
+                       matrix: PixelIcons.coin,
+                       palette: PixelIcons.palette,
+                       size: 24,
+                     ),
+                     const SizedBox(width: 8),
+                     const Text(
+                       'ENQUANTO VOCÊ ESTEVE FORA',
+                       style: TextStyle(
+                         color: PixelTheme.gold,
+                         fontWeight: FontWeight.w800,
+                         fontSize: 14,
+                         letterSpacing: 1,
+                       ),
+                     ),
+                   ],
+                 ),
                ),
              ),
-           ),
+             const SizedBox(height: 12),
+             const Text(
+               'Suas máquinas e poder geraram, mesmo com o app fechado:',
+               textAlign: TextAlign.center,
+               style: PixelTheme.label,
+             ),
+             const SizedBox(height: 8),
+             FittedBox(
+               fit: BoxFit.scaleDown,
+               child: Text(
+                 '+$formattedCoins',
+                 style: const TextStyle(
+                   color: PixelTheme.gold,
+                   fontWeight: FontWeight.w800,
+                   fontSize: 24,
+                 ),
+               ),
+             ),
+             const SizedBox(height: 8),
+             const Text(
+               'Este valor JÁ foi somado ao seu saldo pelo servidor.',
+               textAlign: TextAlign.center,
+               style: PixelTheme.label,
+             ),
+             const SizedBox(height: 4),
+             FittedBox(
+               fit: BoxFit.scaleDown,
+               child: Text(
+                 'Saldo atual: ${_formatBalance(currentBalance)}',
+                 style: const TextStyle(
+                   color: PixelTheme.greenLight,
+                   fontSize: 12,
+                   fontWeight: FontWeight.w700,
+                 ),
+               ),
+             ),
+             const SizedBox(height: 16),
+             PixelButton(
+               label: 'ENTENDI',
+               style: PixelButtonStyle.green,
+               onPressed: () => Navigator.of(context).pop(),
+             ),
+           ],
          ),
-       ],
+       ),
      ),
    );
  }
