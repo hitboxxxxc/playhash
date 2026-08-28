@@ -145,7 +145,25 @@ service cloud.firestore {
     // ---- Poder ---------------------------------------------------------
     // permitir update imediato via transação (aprimorar power)
     match /power/{uid} {
-      allow read, update: if (request.auth != null && request.auth.uid == uid);
+      allow read: if (request.auth != null && request.auth.uid == uid);
+      allow update: if (request.auth != null && request.auth.uid == uid
+        && request.resource.data.totalPower
+           == request.resource.data.permanentPower + request.resource.data.temporaryPower
+        && (
+          (request.resource.data.temporaryPower == resource.data.temporaryPower
+           && request.resource.data.temporaryPowerExpiresAt == resource.data.temporaryPowerExpiresAt
+           && request.resource.data.lastGrantAt == resource.data.lastGrantAt
+           && request.resource.data.permanentPower >= resource.data.permanentPower)
+          ||
+          (request.resource.data.permanentPower == resource.data.permanentPower
+           && request.resource.data.temporaryPower >= resource.data.temporaryPower
+           && request.resource.data.temporaryPower <= resource.data.temporaryPower
+              + get(/databases/$(database)/documents/config/economy).data.maxGamePowerPerSession
+           && request.resource.data.lastGrantAt > request.time - duration.value(10, 'm')
+           && request.resource.data.lastGrantAt < request.time + duration.value(10, 'm')
+           && request.resource.data.temporaryPowerExpiresAt > request.time + duration.value(23, 'h')
+           && request.resource.data.temporaryPowerExpiresAt < request.time + duration.value(25, 'h'))
+        ));
     }
 
     // ---- Máquinas ------------------------------------------------------
@@ -211,28 +229,16 @@ service cloud.firestore {
     // ---- Sessões de partida: cliente escreve INTENÇÃO validada ---------
     // MINIMALISTA (doc 05 §35/§51, prompt 6.7): rules validam DONO+FORMATO;
     // economia (score/duração/breakdown/caps/quota) é validada SOMENTE no runner.
-    match /gameSessions/{sessionId} {
-      allow read: if request.auth != null
-        && resource.data.uid == request.auth.uid;
-
-      // CREATE: dono + chaves exatas do payload do cliente + status open.
-      // O runner valida gameId habilitado, startedAt ≈ agora, etc.
-      allow create: if request.auth != null
+    match /gameSessions/{id} {
+      allow create: if (request.auth != null
         && request.resource.data.uid == request.auth.uid
-        && request.resource.data.clientRequestId == sessionId
-        && request.resource.data.keys().hasOnly(
-              ['uid', 'gameId', 'clientRequestId', 'startedAt', 'clientVersion', 'status'])
-        && request.resource.data.status == 'open';
-
-      // UPDATE: dono + uid imutável + transição open→finished (uma vez).
-      // Campos de score/breakdown/kills/finishedAt são LIVRES — o runner valida.
-      allow update: if request.auth != null
-        && resource.data.uid == request.auth.uid
-        && request.resource.data.uid == resource.data.uid
-        && resource.data.status == 'open'
-        && request.resource.data.status == 'finished';
-
-      allow delete: if false;
+        && request.resource.data.clientRequestId == id
+        && request.resource.data.keys().hasOnly([
+          'uid','gameId','clientRequestId','startedAt','finishedAt','status',
+          'score','breakdown','durationMs','grantedPower','deviceGranted','clientVersion'
+        ]));
+      allow read: if (request.auth != null && resource.data.uid == request.auth.uid);
+      allow update: if (request.auth != null && resource.data.uid == request.auth.uid);
     }
 
     // ---- Intenções de compra: cliente só CRIA a intenção ----------------

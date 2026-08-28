@@ -86,9 +86,8 @@ async function handleIntent(
     const machineConfig = machineConfigSnap.data()!;
     const maxLevel = machineConfig.maxLevel ?? 1;
     const basePower = toInt(machineConfig.powerUnits ?? 0);
-    const levelPowerStep = Number(machineConfig.levelPowerStep ?? 0);
-    const upgradeCostFactor = Number(machineConfig.upgradeCostFactor ?? 0);
     const priceUnits = toInt(machineConfig.priceUnits ?? 0);
+    const priceCoins = Number(priceUnits) / 1_000_000; // price in coins
 
     type TxOutcome =
       | { kind: 'ok'; newLevel: number }
@@ -119,7 +118,9 @@ async function handleIntent(
       }
 
       const nextLevel = currentLevel + 1;
-      const upgradeCost = BigInt(Math.round(Number(priceUnits) * upgradeCostFactor * currentLevel));
+      // Fórmula UPGRADE v2 (14.10): custo = 60% × preçoCoins × 1.6^(n-1)
+      const upgradeCostCoins = Math.round(priceCoins * Math.pow(1.6, currentLevel - 1) * 0.6);
+      const upgradeCost = BigInt(upgradeCostCoins * 1_000_000);
 
       const walletRef = db.doc(`wallets/${intent.uid}`);
       const walletSnap = await tx.get(walletRef);
@@ -131,8 +132,8 @@ async function handleIntent(
         return { kind: 'fail', code: 'INSUFFICIENT_BALANCE' };
       }
 
-      // Recálculo de poder: basePower * (1 + levelPowerStep * (n - 1))
-      const newPower = BigInt(Math.floor(Number(basePower) * (1 + levelPowerStep * (nextLevel - 1))));
+      // Fórmula UPGRADE v2 (14.10): power = basePower × (9 + level) / 10
+      const newPower = BigInt(Math.floor(Number(basePower) * (9 + nextLevel) / 10));
       const oldPower = BigInt(itemData.powerAmount ?? 0);
       const powerDiff = newPower - oldPower;
 

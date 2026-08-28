@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'dart:math';
 
 class PurchaseException implements Exception {
   final String code;
@@ -9,6 +10,17 @@ class PurchaseException implements Exception {
 }
 
 class MachineShopService {
+  static const int kMaxMachineLevel = 10;
+
+  static int upgradeCostCoins(int priceCoins, int level) {
+    final double value = priceCoins * pow(1.6, level - 1) as double;
+    return (value * 0.6).round();
+  }
+
+  static int powerAtLevel(int basePower, int level) {
+    return (basePower * (9 + level)) ~/ 10; // nível 1 = base; +10% base por nível
+  }
+
   static int _readInt(Map<String, dynamic>? data, String key) {
     final Object? v = data?[key];
     if (v is int) return v;
@@ -97,14 +109,15 @@ class MachineShopService {
 
       if (machine == null) throw const PurchaseException('NAO_POSSUIDA');
       final int level = _readInt(machine, 'level');
-      if (level >= maxLevel) throw const PurchaseException('NIVEL_MAX');
+      if (level >= kMaxMachineLevel) throw const PurchaseException('NIVEL_MAX');
 
-      final int cost = ((priceCoins * 75 ~/ 100) * level) * 1000000;
+      final int costCoins = upgradeCostCoins(priceCoins, level);
+      final int cost = costCoins * 1000000;
       final int balance = _readInt(wallet, 'availableBalance');
       if (balance < cost) throw const PurchaseException('SALDO_INSUFICIENTE');
 
       final int oldPower = _readInt(machine, 'power');
-      final int newPower = (powerBase * (100 + 25 * level)) ~/ 100;
+      final int newPower = powerAtLevel(powerBase, level + 1);
       final int delta = newPower - oldPower;
 
       final int permanent = _readInt(power, 'permanentPower');

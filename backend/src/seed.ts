@@ -43,6 +43,7 @@ const ECONOMY = {
  * Preços = sinks de longo payback (doc 05 §34); powerBasePerHs = 1000;
  * coinPrecision = 1_000_000 (1 coin = 1e6 units).
  * Campos: {name, rarity, powerUnits, priceUnits, maxPerUser, enabled, version}.
+ * Fórmulas UPGRADE v2 (14.10): custo = 60% × preço × 1.6^(n-1), power = base × (9+n)/10, maxLevel=10.
  */
 const MACHINES_V2: Record<string, Record<string, unknown>> = {
   'rig-scrap': {
@@ -53,8 +54,8 @@ const MACHINES_V2: Record<string, Record<string, unknown>> = {
     maxPerUser: 5,
     currencyId: 'coins',
     enabled: true,
-    version: 3,
-    maxLevel: 5,
+    version: 4,
+    maxLevel: 10,
     levelPowerStep: 0.25,
     upgradeCostFactor: 0.75,
   },
@@ -66,8 +67,8 @@ const MACHINES_V2: Record<string, Record<string, unknown>> = {
     maxPerUser: 4,
     currencyId: 'coins',
     enabled: true,
-    version: 3,
-    maxLevel: 5,
+    version: 4,
+    maxLevel: 10,
     levelPowerStep: 0.25,
     upgradeCostFactor: 0.75,
   },
@@ -79,8 +80,8 @@ const MACHINES_V2: Record<string, Record<string, unknown>> = {
     maxPerUser: 3,
     currencyId: 'coins',
     enabled: true,
-    version: 3,
-    maxLevel: 5,
+    version: 4,
+    maxLevel: 10,
     levelPowerStep: 0.25,
     upgradeCostFactor: 0.75,
   },
@@ -92,8 +93,8 @@ const MACHINES_V2: Record<string, Record<string, unknown>> = {
     maxPerUser: 2,
     currencyId: 'coins',
     enabled: true,
-    version: 3,
-    maxLevel: 5,
+    version: 4,
+    maxLevel: 10,
     levelPowerStep: 0.25,
     upgradeCostFactor: 0.75,
   },
@@ -105,8 +106,8 @@ const MACHINES_V2: Record<string, Record<string, unknown>> = {
     maxPerUser: 1,
     currencyId: 'coins',
     enabled: true,
-    version: 3,
-    maxLevel: 5,
+    version: 4,
+    maxLevel: 10,
     levelPowerStep: 0.25,
     upgradeCostFactor: 0.75,
   },

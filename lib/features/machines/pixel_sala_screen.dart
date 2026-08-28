@@ -110,15 +110,12 @@ class _PixelSalaScreenState extends ConsumerState<PixelSalaScreen> {
   }
 
   int _calculateUpgradeCost(MachineCatalogModel machine, int currentLevel) {
-    final int price = machine.priceUnits.toInt();
-    final double factor = machine.upgradeCostFactor;
-    return (price * factor * currentLevel).round();
+    final int priceCoins = (machine.priceUnits ~/ BigInt.from(1000000)).toInt();
+    return MachineShopService.upgradeCostCoins(priceCoins, currentLevel);
   }
 
   int _calculatePower(MachineCatalogModel machine, int level) {
-    final int basePower = machine.powerUnits;
-    final double step = machine.levelPowerStep;
-    return (basePower * (1 + step * (level - 1))).toInt();
+    return MachineShopService.powerAtLevel(machine.powerUnits, level);
   }
 
   String _formatPurchasedDate(dynamic purchasedAt) {
@@ -287,12 +284,12 @@ class _PixelSalaScreenState extends ConsumerState<PixelSalaScreen> {
               const SizedBox(height: 10),
               if (level < maxLevel)
                 Text(
-                  'PRÓXIMO NÍVEL: ${_formatPowerText(currentPower)} → ${_formatPowerText(nextPower)} ${_formatPowerUnit(nextPower)}',
+                  'PRÓXIMO NÍVEL: ${_formatPowerText(currentPower)} → ${_formatPowerText(nextPower)} ${_formatPowerUnit(nextPower)}  |  Custo: ${CoinFormat.formatMinimalUnits(BigInt.from(upgradeCost))}',
                   style: const TextStyle(color: PixelTheme.purple, fontSize: 11, fontWeight: FontWeight.bold),
                 )
               else
                 const Text(
-                  'NÍVEL MÁXIMO ATINGIDO',
+                  'NÍVEL MÁX',
                   style: TextStyle(color: PixelTheme.gold, fontSize: 11, fontWeight: FontWeight.bold),
                 ),
               const SizedBox(height: 16),
