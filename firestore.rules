@@ -130,15 +130,40 @@ service cloud.firestore {
     // (b) lifetimeEarned permanecer intacto. Reserva mantém a soma,
     // conclusão DIMINUI (dinheiro saiu), estorno mantém. Crédito continua
     // EXCLUSIVAMENTE pelo runner/Admin SDK (bypassa rules).
+    // 14.11 — EXCEÇÃO COLETA OFFLINE: permite AUMENTO controlado do saldo
+    // disponível (OfflineMiningService): teto 1.500.000.000 unidades
+    // (1500 COIN) por coleta, lifetimeEarned cresce EXATAMENTE o delta do
+    // saldo, pendingBalance intacto e lastAccumulatedAt estritamente
+    // crescente (anti-replay). Saldos são STRING decimal ⇒ balInt().
     match /wallets/{uid} {
       allow read: if isOwner(uid);
       allow update: if isOwner(uid)
-        && balInt(request.resource.data, 'availableBalance')
-         + balInt(request.resource.data, 'pendingBalance')
-        <= balInt(resource.data, 'availableBalance')
-            + balInt(resource.data, 'pendingBalance')
-        && balInt(request.resource.data, 'lifetimeEarned')
-         == balInt(resource.data, 'lifetimeEarned');
+        && (
+          // Regra original: nunca aumentar, lifetime intacto.
+          (balInt(request.resource.data, 'availableBalance')
+           + balInt(request.resource.data, 'pendingBalance')
+          <= balInt(resource.data, 'availableBalance')
+              + balInt(resource.data, 'pendingBalance')
+          && balInt(request.resource.data, 'lifetimeEarned')
+           == balInt(resource.data, 'lifetimeEarned'))
+          ||
+          // 14.11: aumento controlado da coleta offline.
+          (balInt(request.resource.data, 'availableBalance')
+             > balInt(resource.data, 'availableBalance')
+          && balInt(request.resource.data, 'availableBalance')
+             <= balInt(resource.data, 'availableBalance') + 1500000000
+          && balInt(request.resource.data, 'lifetimeEarned')
+             == balInt(resource.data, 'lifetimeEarned')
+                + (balInt(request.resource.data, 'availableBalance')
+                   - balInt(resource.data, 'availableBalance'))
+          && balInt(request.resource.data, 'pendingBalance')
+             == balInt(resource.data, 'pendingBalance')
+          && 'lastAccumulatedAt' in request.resource.data
+          && request.resource.data.lastAccumulatedAt is int
+          && (!('lastAccumulatedAt' in resource.data)
+              || request.resource.data.lastAccumulatedAt
+                 > resource.data.lastAccumulatedAt))
+        );
       allow create, delete: if false;
     }
 
@@ -387,9 +412,25 @@ service cloud.firestore {
     // elas — sem isto o catch-all negava com PERMISSION_DENIED). O runner
     // grava {type, amount, currencyId, createdAt, referenceId} ao creditar
     // (GAME_REWARD / REWARD_BLOCK); cliente lê como owner, nunca escreve.
+    // 14.11 — EXCEÇÃO: o DONO pode CRIAR (nunca atualizar/deletar) a entrada
+    // REWARD_OFFLINE da coleta offline, na MESMA transação do aumento de
+    // saldo da wallet (campos exatos; amount string decimal ≤ teto da rule).
     match /rewards/{uid}/items/{itemId} {
       allow read: if isOwner(uid);
-      allow write: if false;
+      allow create: if isOwner(uid)
+        && request.resource.data.type == 'REWARD_OFFLINE'
+        && request.resource.data.keys().hasOnly(
+              ['type', 'amount', 'currencyId', 'periods', 'createdAt', 'status'])
+        && request.resource.data.currencyId == 'coins'
+        && request.resource.data.status == 'completed'
+        && request.resource.data.amount is string
+        && int(request.resource.data.amount) > 0
+        && int(request.resource.data.amount) <= 1500000000
+        && request.resource.data.periods is int
+        && request.resource.data.periods > 0
+        && request.resource.data.periods <= 288
+        && withinTolerance(request.resource.data.createdAt);
+      allow update, delete: if false;
     }
 
     // ---- Config interna: catálogo de máquinas legível; economia fechada --

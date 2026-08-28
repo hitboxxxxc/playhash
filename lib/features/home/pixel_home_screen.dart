@@ -14,6 +14,7 @@ import '../../core/widgets/pixel_icon.dart';
 import '../../core/widgets/pixel_icons.dart';
 import '../../core/widgets/section_title.dart';
 import '../../core/widgets/pixel_button.dart';
+import '../../core/services/offline_mining_service.dart';
 import '../../data/models/power_model.dart';
 import '../../data/repositories/mining_repository.dart';
 
@@ -67,196 +68,243 @@ class _PixelHomeScreenState extends ConsumerState<PixelHomeScreen> {
   BlockSnapshot? _block;
 
   StreamSubscription<BlockSnapshot?>? _blockSub;
- bool _idleDialogShown = false;
+  bool _idleDialogShown = false;
+  Timer? _offlineTimer;
 
- @override
- void initState() {
-   super.initState();
-   _subscribeBlock();
-   _checkIdleRewards();
- }
+  @override
+  void initState() {
+    super.initState();
+    _subscribeBlock();
+    _checkIdleRewards();
+    _startOfflineMiningTimer();
+  }
 
- @override
- void dispose() {
-   _blockSub?.cancel();
-   super.dispose();
- }
+  @override
+  void dispose() {
+    _blockSub?.cancel();
+    _offlineTimer?.cancel();
+    super.dispose();
+  }
 
- /// Verifica recompensas ociosas ("enquanto você esteve fora") na inicialização.
- /// 1. Lê users/{uid}.lastLoginAt (prev) ANTES de qualquer update.
- /// 2. Lê rewards/{uid}/items limit 200 (sem orderBy), soma amount dos createdAt em (prev, agora].
- /// 3. Se soma > 0 → Dialog pixel.
- /// 4. Depois: users/{uid}.update({'lastLoginAt': Timestamp.now()}).
- Future<void> _checkIdleRewards() async {
-   try {
-     final String? uid = FirebaseAuth.instance.currentUser?.uid;
-     if (uid == null || _idleDialogShown) return;
-     _idleDialogShown = true;
+  void _startOfflineMiningTimer() {
+    // run once now (boot: check-in diário + coleta offline)
+    unawaited(OfflineMiningService.collectOfflineRewards());
+    // then every 5 minutes while app is in foreground
+    _offlineTimer = Timer.periodic(const Duration(minutes: 5), (timer) {
+      if (mounted) {
+        unawaited(OfflineMiningService.collectOfflineRewards());
+      }
+    });
+  }
 
-     final db = FirebaseFirestore.instance;
-     final userRef = db.doc('users/$uid');
+  /// Botão "COLETAR RECOMPENSAS OFFLINE" — chama o serviço e mostra
+  /// SnackBar "+X COIN coletados" (X formatado pt-BR, unidades mínimas 1e6).
+  /// O stream de `wallets/{uid}` (walletStreamProvider) atualiza o saldo
+  /// automaticamente após a transação.
+  Future<void> _collectOffline() async {
+    try {
+      final int units = await OfflineMiningService.collectOfflineRewards();
+      if (!mounted) return;
+      final BigInt scale = BigInt.from(1000000);
+      final BigInt whole = BigInt.from(units) ~/ scale;
+      final BigInt frac = (BigInt.from(units) % scale).abs();
+      final String formatted =
+          '${_groupThousands(whole.toString())},${frac.toString().padLeft(6, '0').substring(0, 2)}';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(units > 0
+              ? '+$formatted COIN coletados'
+              : 'Nada a coletar agora (máquinas OFF ou sem períodos pendentes)'),
+          backgroundColor: units > 0 ? PixelTheme.green : PixelTheme.purple,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      debugPrint('Offline collect failed: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Falha ao coletar recompensas offline'),
+          backgroundColor: PixelTheme.purple,
+        ),
+      );
+    }
+  }
 
-     // 1. Ler lastLoginAt anterior
-     final userSnap = await userRef.get();
-     final prevLogin = userSnap.get('lastLoginAt') as Timestamp?;
-     if (prevLogin == null) {
-       // Primeiro login, apenas atualiza lastLoginAt
-       await userRef.update({'lastLoginAt': FieldValue.serverTimestamp()});
-       return;
-     }
-     final prevLoginMs = prevLogin.toDate().millisecondsSinceEpoch;
-     final nowMs = DateTime.now().millisecondsSinceEpoch;
+  /// Verifica recompensas ociosas ("enquanto você esteve fora") na inicialização.
+  /// 1. Lê users/{uid}.lastLoginAt (prev) ANTES de qualquer update.
+  /// 2. Lê rewards/{uid}/items limit 200 (sem orderBy), soma amount dos createdAt em (prev, agora].
+  /// 3. Se soma > 0 → Dialog pixel.
+  /// 4. Depois: users/{uid}.update({'lastLoginAt': Timestamp.now()}).
+  Future<void> _checkIdleRewards() async {
+    try {
+      final String? uid = FirebaseAuth.instance.currentUser?.uid;
+      if (uid == null || _idleDialogShown) return;
+      _idleDialogShown = true;
 
-     // 2. Ler rewards/{uid}/items (limit 200, sem orderBy)
-     final rewardsSnap = await db
-         .collection('rewards/$uid/items')
-         .limit(200)
-         .get();
+      final db = FirebaseFirestore.instance;
+      final userRef = db.doc('users/$uid');
 
-     BigInt totalCoins = BigInt.zero;
-     for (final doc in rewardsSnap.docs) {
-       final data = doc.data();
-       final createdAt = data['createdAt'] as Timestamp?;
-       final amountStr = data['amount'] as String?;
-       final type = data['type'] as String?;
-       final currencyId = data['currencyId'] as String?;
+      // 1. Ler lastLoginAt anterior
+      final userSnap = await userRef.get();
+      final prevLogin = userSnap.get('lastLoginAt') as Timestamp?;
+      if (prevLogin == null) {
+        // Primeiro login, apenas atualiza lastLoginAt
+        await userRef.update({'lastLoginAt': FieldValue.serverTimestamp()});
+        return;
+      }
+      final prevLoginMs = prevLogin.toDate().millisecondsSinceEpoch;
+      final nowMs = DateTime.now().millisecondsSinceEpoch;
 
-       if (createdAt == null || amountStr == null) continue;
-       if (type != 'REWARD_BLOCK') continue; // apenas blocos de mineração
-       if (currencyId != 'coins') continue;
+      // 2. Ler rewards/{uid}/items (limit 200, sem orderBy)
+      final rewardsSnap = await db
+          .collection('rewards/$uid/items')
+          .limit(200)
+          .get();
 
-       final createdMs = createdAt.toDate().millisecondsSinceEpoch;
-       if (createdMs > prevLoginMs && createdMs <= nowMs) {
-         totalCoins += BigInt.tryParse(amountStr) ?? BigInt.zero;
-       }
-     }
+      BigInt totalCoins = BigInt.zero;
+      for (final doc in rewardsSnap.docs) {
+        final data = doc.data();
+        final createdAt = data['createdAt'] as Timestamp?;
+        final amountStr = data['amount'] as String?;
+        final type = data['type'] as String?;
+        final currencyId = data['currencyId'] as String?;
 
-     // 3. Se soma > 0 → Dialog pixel
-     if (totalCoins > BigInt.zero && mounted) {
-       // Converter para string formatada pt-BR
-       final scale = BigInt.from(1000000);
-       final whole = totalCoins ~/ scale;
-       final frac = (totalCoins % scale).abs();
-       final wholeStr = _groupThousands(whole.toString());
-       final fracStr = frac.toString().padLeft(6, '0').substring(0, 2);
-       final formatted = '$wholeStr,$fracStr COIN';
+        if (createdAt == null || amountStr == null) continue;
+        if (type != 'REWARD_BLOCK') continue; // apenas blocos de mineração
+        if (currencyId != 'coins') continue;
 
-       // Get current balance for dialog
-       final walletAsync = ref.watch(walletStreamProvider);
-       final currentBalance = walletAsync.value?.availableBalance;
-       _showIdleDialog(formatted, currentBalance);
-     }
+        final createdMs = createdAt.toDate().millisecondsSinceEpoch;
+        if (createdMs > prevLoginMs && createdMs <= nowMs) {
+          totalCoins += BigInt.tryParse(amountStr) ?? BigInt.zero;
+        }
+      }
 
-     // 4. Atualizar lastLoginAt
-     await userRef.update({'lastLoginAt': FieldValue.serverTimestamp()});
-   } catch (e) {
-     // Falha silenciosa - não quebra a tela (ex.: testes sem Firebase mockado)
-     debugPrint('Idle rewards check failed: $e');
-   }
- }
+      // 3. Se soma > 0 → Dialog pixel
+      if (totalCoins > BigInt.zero && mounted) {
+        // Converter para string formatada pt-BR
+        final scale = BigInt.from(1000000);
+        final whole = totalCoins ~/ scale;
+        final frac = (totalCoins % scale).abs();
+        final wholeStr = _groupThousands(whole.toString());
+        final fracStr = frac.toString().padLeft(6, '0').substring(0, 2);
+        final formatted = '$wholeStr,$fracStr COIN';
 
- /// Formata BigInt (unidades mínimas 1e6) para string pt-BR "1.234,56 COIN"
- String _formatBalance(BigInt? balance) {
-   if (balance == null || balance == BigInt.zero) return '0,00 COIN';
-   final BigInt scale = BigInt.from(1000000);
-   final BigInt whole = balance ~/ scale;
-   final BigInt frac = (balance % scale).abs();
-   final String wholeStr = _groupThousands(whole.toString());
-   final String fracStr = frac.toString().padLeft(6, '0').substring(0, 2);
-   return '$wholeStr,$fracStr COIN';
- }
+        // Get current balance for dialog
+        final walletAsync = ref.watch(walletStreamProvider);
+        final currentBalance = walletAsync.value?.availableBalance;
+        _showIdleDialog(formatted, currentBalance);
+      }
 
- void _showIdleDialog(String formattedCoins, BigInt? currentBalance) {
-   if (!mounted) return;
-   showDialog<void>(
-     context: context,
-     barrierDismissible: false,
-     builder: (BuildContext context) => Dialog(
-       backgroundColor: PixelTheme.panel,
-       child: Container(
-         decoration: BoxDecoration(
-           color: PixelTheme.panel,
-           border: Border.all(color: PixelTheme.gold, width: 2),
-           borderRadius: BorderRadius.circular(8),
-         ),
-         padding: const EdgeInsets.all(16),
-         child: Column(
-           mainAxisSize: MainAxisSize.min,
-           children: [
-             SizedBox(
-               width: double.infinity,
-               child: FittedBox(
-                 fit: BoxFit.scaleDown,
-                 child: Row(
-                   mainAxisSize: MainAxisSize.min,
-                   children: [
-                     PixelIcon(
-                       matrix: PixelIcons.coin,
-                       palette: PixelIcons.palette,
-                       size: 24,
-                     ),
-                     const SizedBox(width: 8),
-                     const Text(
-                       'ENQUANTO VOCÊ ESTEVE FORA',
-                       style: TextStyle(
-                         color: PixelTheme.gold,
-                         fontWeight: FontWeight.w800,
-                         fontSize: 14,
-                         letterSpacing: 1,
-                       ),
-                     ),
-                   ],
-                 ),
-               ),
-             ),
-             const SizedBox(height: 12),
-             const Text(
-               'Suas máquinas e poder geraram, mesmo com o app fechado:',
-               textAlign: TextAlign.center,
-               style: PixelTheme.label,
-             ),
-             const SizedBox(height: 8),
-             FittedBox(
-               fit: BoxFit.scaleDown,
-               child: Text(
-                 '+$formattedCoins',
-                 style: const TextStyle(
-                   color: PixelTheme.gold,
-                   fontWeight: FontWeight.w800,
-                   fontSize: 24,
-                 ),
-               ),
-             ),
-             const SizedBox(height: 8),
-             const Text(
-               'Este valor JÁ foi somado ao seu saldo pelo servidor.',
-               textAlign: TextAlign.center,
-               style: PixelTheme.label,
-             ),
-             const SizedBox(height: 4),
-             FittedBox(
-               fit: BoxFit.scaleDown,
-               child: Text(
-                 'Saldo atual: ${_formatBalance(currentBalance)}',
-                 style: const TextStyle(
-                   color: PixelTheme.greenLight,
-                   fontSize: 12,
-                   fontWeight: FontWeight.w700,
-                 ),
-               ),
-             ),
-             const SizedBox(height: 16),
-             PixelButton(
-               label: 'ENTENDI',
-               style: PixelButtonStyle.green,
-               onPressed: () => Navigator.of(context).pop(),
-             ),
-           ],
-         ),
-       ),
-     ),
-   );
- }
+      // 4. Atualizar lastLoginAt
+      await userRef.update({'lastLoginAt': FieldValue.serverTimestamp()});
+    } catch (e) {
+      // Falha silenciosa - não quebra a tela (ex.: testes sem Firebase mockado)
+      debugPrint('Idle rewards check failed: $e');
+    }
+  }
+
+  /// Formata BigInt (unidades mínimas 1e6) para string pt-BR "1.234,56 COIN"
+  String _formatBalance(BigInt? balance) {
+    if (balance == null || balance == BigInt.zero) return '0,00 COIN';
+    final BigInt scale = BigInt.from(1000000);
+    final BigInt whole = balance ~/ scale;
+    final BigInt frac = (balance % scale).abs();
+    final String wholeStr = _groupThousands(whole.toString());
+    final String fracStr = frac.toString().padLeft(6, '0').substring(0, 2);
+    return '$wholeStr,$fracStr COIN';
+  }
+
+  void _showIdleDialog(String formattedCoins, BigInt? currentBalance) {
+    if (!mounted) return;
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) => Dialog(
+        backgroundColor: PixelTheme.panel,
+        child: Container(
+          decoration: BoxDecoration(
+            color: PixelTheme.panel,
+            border: Border.all(color: PixelTheme.gold, width: 2),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                width: double.infinity,
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      PixelIcon(
+                        matrix: PixelIcons.coin,
+                        palette: PixelIcons.palette,
+                        size: 24,
+                      ),
+                      const SizedBox(width: 8),
+                      const Text(
+                        'ENQUANTO VOCÊ ESTEVE FORA',
+                        style: TextStyle(
+                          color: PixelTheme.gold,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 14,
+                          letterSpacing: 1,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'Suas máquinas e poder geraram, mesmo com o app fechado:',
+                textAlign: TextAlign.center,
+                style: PixelTheme.label,
+              ),
+              const SizedBox(height: 8),
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  '+$formattedCoins',
+                  style: const TextStyle(
+                    color: PixelTheme.gold,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 24,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Este valor JÁ foi somado ao seu saldo pelo servidor.',
+                textAlign: TextAlign.center,
+                style: PixelTheme.label,
+              ),
+              const SizedBox(height: 4),
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  'Saldo atual: ${_formatBalance(currentBalance)}',
+                  style: const TextStyle(
+                    color: PixelTheme.greenLight,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              PixelButton(
+                label: 'ENTENDI',
+                style: PixelButtonStyle.green,
+                onPressed: () => Navigator.of(context).pop(),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 
   /// Stream do bloco em tempo real (mesma fonte da home/mineração antiga).
   /// Falha => null (estado vazio — nunca quebra a tela).
@@ -318,6 +366,55 @@ class _PixelHomeScreenState extends ConsumerState<PixelHomeScreen> {
       if (remaining > 0 && remaining % 3 == 0) out.write('.');
     }
     return out.toString();
+  }
+
+  /// Card "COLETAR RECOMPENSAS OFFLINE" (14.11) — o check-in diário é feito
+  /// automaticamente pelo serviço no boot ([_startOfflineMiningTimer]); este
+  /// botão reexecuta a coleta sob demanda e mostra SnackBar "+X COIN".
+  Widget _buildCheckInCard() {
+    return PixelCard(
+      borderColor: PixelTheme.purple,
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        children: [
+          const Text(
+            'COLETAR RECOMPENSAS OFFLINE',
+            style: TextStyle(
+              color: PixelTheme.purple,
+              fontWeight: FontWeight.bold,
+              fontSize: 16,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: PixelTheme.panel,
+              border: Border.all(
+                color: PixelTheme.green,
+                width: 2,
+              ),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: const Text(
+              'Check-in diário automático mantém suas máquinas ATIVAS por 24h.\n'
+              'Períodos de 5 min não processados são creditados aqui.',
+              style: TextStyle(
+                color: PixelTheme.text,
+                fontSize: 14,
+              ),
+              textAlign: TextAlign.center,
+            ),
+          ),
+          const SizedBox(height: 8),
+          PixelButton(
+            label: 'COLETAR RECOMPENSAS OFFLINE',
+            style: PixelButtonStyle.purple,
+            onPressed: _collectOffline,
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -586,6 +683,8 @@ class _PixelHomeScreenState extends ConsumerState<PixelHomeScreen> {
                 powerCard,
                 const SizedBox(height: 12),
                 countdownLine,
+                const SizedBox(height: 12),
+                _buildCheckInCard(),
                 const SizedBox(height: 12),
                 const SectionTitle(text: 'GANHE COIN'),
                 const SizedBox(height: 8),
