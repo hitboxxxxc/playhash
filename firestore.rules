@@ -119,7 +119,8 @@ service cloud.firestore {
         ]);
       allow update: if isOwner(uid)
         && request.resource.data.keys().hasOnly([
-          'displayName', 'photoUrl', 'lastLoginAt', 'settings'
+          'displayName', 'photoUrl', 'lastLoginAt', 'settings',
+          'lastCheckinAt', 'machinesOn'
         ]);
       allow delete: if false;
     }
@@ -135,6 +136,8 @@ service cloud.firestore {
     // (1500 COIN) por coleta, lifetimeEarned cresce EXATAMENTE o delta do
     // saldo, pendingBalance intacto e lastAccumulatedAt estritamente
     // crescente (anti-replay). Saldos são STRING decimal ⇒ balInt().
+    // 14.11-FIX2: lastAccumulatedAt agora é TIMESTAMP (o serviço grava
+    // Timestamp.now()); primeira coleta aceita com campo ausente (null-safe).
     match /wallets/{uid} {
       allow read: if isOwner(uid);
       allow update: if isOwner(uid)
@@ -159,10 +162,9 @@ service cloud.firestore {
           && balInt(request.resource.data, 'pendingBalance')
              == balInt(resource.data, 'pendingBalance')
           && 'lastAccumulatedAt' in request.resource.data
-          && request.resource.data.lastAccumulatedAt is int
-          && (!('lastAccumulatedAt' in resource.data)
-              || request.resource.data.lastAccumulatedAt
-                 > resource.data.lastAccumulatedAt))
+          && request.resource.data.lastAccumulatedAt is timestamp
+          && (resource.data.lastAccumulatedAt == null
+              || request.resource.data.lastAccumulatedAt > resource.data.lastAccumulatedAt))
         );
       allow create, delete: if false;
     }
@@ -388,6 +390,15 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    // ---- Check-in diário (14.11-FIX2): dono CRIA o doc do dia -------------
+    // checkins/{uid}/{yyyy-MM-dd} — idempotente (set sem merge reescreve o
+    // MESMO doc). O estado real das máquinas vive em users/{uid}.lastCheckinAt
+    // (fonte única); este doc é apenas o registro diário.
+    match /checkins/{uid}/{date} {
+      allow read, create: if isOwner(uid);
+      allow update, delete: if false;
+    }
+
     // ---- Blocos e transações: leitura pública/dono, escrita backend -----
     match /blocks/{periodKey} {
       allow read: if isSignedIn();
@@ -414,21 +425,24 @@ service cloud.firestore {
     // (GAME_REWARD / REWARD_BLOCK); cliente lê como owner, nunca escreve.
     // 14.11 — EXCEÇÃO: o DONO pode CRIAR (nunca atualizar/deletar) a entrada
     // REWARD_OFFLINE da coleta offline, na MESMA transação do aumento de
-    // saldo da wallet (campos exatos; amount string decimal ≤ teto da rule).
+    // saldo da wallet (campos exatos; amount int ≤ teto da rule).
+    // 14.11-FIX2: payload do OfflineMiningService — amount INT, periodFrom/
+    // periodTo (chaves epoch-based do runner), createdAt timestamp.
     match /rewards/{uid}/items/{itemId} {
       allow read: if isOwner(uid);
       allow create: if isOwner(uid)
         && request.resource.data.type == 'REWARD_OFFLINE'
         && request.resource.data.keys().hasOnly(
-              ['type', 'amount', 'currencyId', 'periods', 'createdAt', 'status'])
-        && request.resource.data.currencyId == 'coins'
-        && request.resource.data.status == 'completed'
-        && request.resource.data.amount is string
-        && int(request.resource.data.amount) > 0
-        && int(request.resource.data.amount) <= 1500000000
+              ['type', 'amount', 'periods', 'createdAt',
+               'periodFrom', 'periodTo'])
+        && request.resource.data.amount is int
+        && request.resource.data.amount > 0
+        && request.resource.data.amount <= 1500000000
         && request.resource.data.periods is int
         && request.resource.data.periods > 0
         && request.resource.data.periods <= 288
+        && request.resource.data.periodFrom is string
+        && request.resource.data.periodTo is string
         && withinTolerance(request.resource.data.createdAt);
       allow update, delete: if false;
     }

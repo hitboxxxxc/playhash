@@ -87,36 +87,62 @@ class _PixelHomeScreenState extends ConsumerState<PixelHomeScreen> {
   }
 
   void _startOfflineMiningTimer() {
-    // run once now (boot: check-in diário + coleta offline)
-    unawaited(OfflineMiningService.collectOfflineRewards());
+    // run once now (boot: check-in diário + coleta offline; dialog se > 0)
+    unawaited(_bootCollect());
     // then every 5 minutes while app is in foreground
     _offlineTimer = Timer.periodic(const Duration(minutes: 5), (timer) {
       if (mounted) {
-        unawaited(OfflineMiningService.collectOfflineRewards());
+        unawaited(OfflineMiningService.collect());
       }
     });
   }
 
-  /// Botão "COLETAR RECOMPENSAS OFFLINE" — chama o serviço e mostra
-  /// SnackBar "+X COIN coletados" (X formatado pt-BR, unidades mínimas 1e6).
+  /// Coleta no BOOT (14.11-FIX2): chama [OfflineMiningService.collect] 1×;
+  /// se creditou moedas, mostra o dialog "ENQUANTO VOCÊ ESTEVE FORA".
+  Future<void> _bootCollect() async {
+    try {
+      final OfflineCollectResult r = await OfflineMiningService.collect();
+      if (!mounted || r.coins <= 0) return;
+      final walletAsync = ref.read(walletStreamProvider);
+      _showIdleDialog(_fmtCoins2(r.coins), walletAsync.value?.availableBalance);
+    } catch (e) {
+      debugPrint('Boot offline collect failed: $e');
+    }
+  }
+
+  /// Formata unidades mínimas (escala 1e6) como decimal pt-BR "1.234,56".
+  String _fmtCoins2(int units) {
+    final BigInt scale = BigInt.from(1000000);
+    final BigInt whole = BigInt.from(units) ~/ scale;
+    final BigInt frac = (BigInt.from(units) % scale).abs();
+    return '${_groupThousands(whole.toString())},${frac.toString().padLeft(6, '0').substring(0, 2)}';
+  }
+
+  /// Botão "COLETAR RECOMPENSAS OFFLINE" (14.11-FIX2) — chama
+  /// [OfflineMiningService.collect] e mostra SnackBar conforme o reason:
+  ///  - 'ok'       → verde "+`<valor>` COIN coletados (`<n>` períodos)";
+  ///  - 'nada'     → "Nada a coletar agora";
+  ///  - 'sem_poder'→ "Compre máquinas ou jogue para gerar poder".
   /// O stream de `wallets/{uid}` (walletStreamProvider) atualiza o saldo
   /// automaticamente após a transação.
   Future<void> _collectOffline() async {
     try {
-      final int units = await OfflineMiningService.collectOfflineRewards();
+      final OfflineCollectResult r = await OfflineMiningService.collect();
       if (!mounted) return;
-      final BigInt scale = BigInt.from(1000000);
-      final BigInt whole = BigInt.from(units) ~/ scale;
-      final BigInt frac = (BigInt.from(units) % scale).abs();
-      final String formatted =
-          '${_groupThousands(whole.toString())},${frac.toString().padLeft(6, '0').substring(0, 2)}';
+      final String message;
+      final Color color;
+      if (r.reason == 'ok') {
+        message = '+${_fmtCoins2(r.coins)} COIN coletados (${r.periods} períodos)';
+        color = PixelTheme.green;
+      } else if (r.reason == 'sem_poder') {
+        message = 'Compre máquinas ou jogue para gerar poder';
+        color = PixelTheme.purple;
+      } else {
+        message = 'Nada a coletar agora';
+        color = PixelTheme.purple;
+      }
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(units > 0
-              ? '+$formatted COIN coletados'
-              : 'Nada a coletar agora (máquinas OFF ou sem períodos pendentes)'),
-          backgroundColor: units > 0 ? PixelTheme.green : PixelTheme.purple,
-        ),
+        SnackBar(content: Text(message), backgroundColor: color),
       );
     } catch (e) {
       if (!mounted) return;
